@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="referrer" content="no-referrer">
+  <title>Art Gallery & Tag Explorer</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- TOP BAR -->
+  <div class="top-bar">
+    <div class="left-controls">
+      <div class="nav-tabs">
+        <button id="tabGallery" class="nav-tab active">🖼️ Gallery</button>
+        <button id="tabGacha" class="nav-tab">
+          🎰 Gacha <span id="gachaSummonedBadge" class="badge">0</span>
+        </button>
+      </div>
+
+      <div class="view-toggle" id="galleryViewToggles">
+        <button id="viewPosts" class="toggle-opt active">Cards</button>
+        <button id="viewMedia" class="toggle-opt">Images</button>
+      </div>
+
+      <!-- Column-Based Zoom Controls -->
+      <div class="gallery-zoom-wrap" id="galleryZoomWrap">
+        <button class="zoom-action-btn" id="galZoomMinus" title="Fewer columns (larger cards)">−</button>
+        <span id="colCountLabel">4 cols</span>
+        <button class="zoom-action-btn" id="galZoomPlus" title="More columns (smaller cards)">+</button>
+      </div>
+
+      <!-- Counter Badge -->
+      <div class="counter-group">
+        <span class="badge" id="loadedCountBadge">No files loaded</span>
+        <span class="count" id="count"></span>
+      </div>
+    </div>
+
+    <div class="right-controls">
+      <span id="saveProgress" class="save-status" style="display: none;"></span>
+
+      <!-- Storage Dropdown -->
+      <div class="dropdown-container">
+        <button class="btn" id="storageMenuBtn" title="Offline cache management">💾 Storage ▾</button>
+        <div class="dropdown-menu" id="storageMenu">
+          <button class="dropdown-item" id="saveOfflineBtn">💾 Save All Offline</button>
+          <button class="dropdown-item" id="saveGachaStateBtn">🎰 Save Gacha Progress</button>
+          <button class="dropdown-item danger" id="clearCacheBtn">🗑️ Clear Cache</button>
+        </div>
+      </div>
+
+      <!-- Export Dropdown -->
+      <div class="dropdown-container">
+        <button class="btn" id="exportMenuBtn" title="Export posts as JSON">📤 Export ▾</button>
+        <div class="dropdown-menu" id="exportMenu">
+          <button class="dropdown-item" id="exportAllBtn">📦 Export All Combined</button>
+          <button class="dropdown-item" id="exportFilteredBtn">🔍 Export Current Filtered</button>
+          <button class="dropdown-item" id="exportGachaMenuBtn">🎰 Export Gacha Inventory</button>
+        </div>
+      </div>
+
+      <button class="btn" id="loadFilesBtn">📄 Load JSON File(s)</button>
+      <input type="file" id="fileInput" accept=".json" multiple>
+
+      <!-- Theme Switcher & Secret Code Dropdown -->
+      <div class="dropdown-container" id="themeToggleContainer">
+        <button id="themeToggle" class="theme-btn" title="Toggle Theme (Hold for Secret Codes)">🌙</button>
+        <div class="dropdown-menu" id="secretCodeMenu" style="right: 0; left: auto; padding: 10px; width: 220px;">
+          <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-bold); margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between;">
+            <span>🔒 SECRET CODE</span>
+            <span id="closeSecretMenuBtn" style="cursor: pointer; color: var(--subtext); font-size: 0.95rem;">&times;</span>
+          </div>
+          <input type="text" id="secretCodeInput" placeholder="ENTER CODE..." style="width: 100%; text-transform: uppercase; background: var(--bg); border: 1px solid var(--border); color: var(--text-bold); padding: 6px 8px; border-radius: 6px; font-size: 0.8rem; font-weight: 700; outline: none; letter-spacing: 0.5px;">
+          <div id="secretCodeMsg" style="font-size: 0.7rem; margin-top: 5px; display: none;"></div>
+          <button type="button" id="applySecretCodeBtn" class="btn" style="width: 100%; justify-content: center; margin-top: 8px; padding: 5px 0; font-size: 0.78rem; font-weight: 600;">Apply Code</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GALLERY VIEW -->
+  <div id="galleryView" class="view-container">
+    <div class="gallery-sub-bar" id="gallerySubBar" style="display: none;">
+      <div class="search-box-wrap">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="gallerySearchInput" placeholder="Search title, artist, handle, tags..." autocomplete="off">
+        <button id="clearSearchBtn" class="clear-search-btn" style="display:none;" title="Clear search">&times;</button>
+      </div>
+
+      <div class="filter-controls-wrap">
+        <!-- Platform Filter -->
+        <div class="dropdown-container custom-dropdown" data-select="platformFilterSelect" title="Filter by Platform">
+          <button type="button" class="filter-action-btn custom-dropdown-btn">🌐 All Platforms (0) ▾</button>
+          <div class="dropdown-menu custom-dropdown-menu"></div>
+          <select id="platformFilterSelect" style="display:none;">
+            <option value="all">🌐 All Platforms (0)</option>
+            <option value="twitter">🐦 Twitter / X (0)</option>
+            <option value="pixiv">🖌️ Pixiv (0)</option>
+            <option value="pinterest">📌 Pinterest (0)</option>
+            <option value="deviantart">🎨 DeviantArt (0)</option>
+          </select>
+        </div>
+
+        <!-- Artist Filter -->
+        <div class="dropdown-container custom-dropdown" data-select="artistFilterSelect" title="Filter by Artist">
+          <button type="button" class="filter-action-btn custom-dropdown-btn">👤 All Artists (0) ▾</button>
+          <div class="dropdown-menu custom-dropdown-menu" style="max-height: 280px; overflow-y: auto;"></div>
+          <select id="artistFilterSelect" style="display:none;">
+            <option value="all">👤 All Artists (0)</option>
+          </select>
+        </div>
+
+        <!-- Aspect Ratio Filter -->
+        <div class="dropdown-container custom-dropdown" data-select="aspectFilterSelect" title="Filter by Aspect Ratio">
+          <button type="button" class="filter-action-btn custom-dropdown-btn">📐 All Ratios (0) ▾</button>
+          <div class="dropdown-menu custom-dropdown-menu"></div>
+          <select id="aspectFilterSelect" style="display:none;">
+            <option value="all">📐 All Ratios (0)</option>
+            <option value="portrait">📱 Portrait (0)</option>
+            <option value="landscape">🖥️ Landscape (0)</option>
+            <option value="square">⏹️ Square (0)</option>
+          </select>
+        </div>
+
+        <!-- Dominant Color Filter -->
+        <div class="dropdown-container custom-dropdown" data-select="colorFilterSelect" title="Filter by Dominant Color">
+          <button type="button" class="filter-action-btn custom-dropdown-btn">🎨 All Colors (0) ▾</button>
+          <div class="dropdown-menu custom-dropdown-menu" style="max-height: 280px; overflow-y: auto;"></div>
+          <select id="colorFilterSelect" style="display:none;">
+            <option value="all">🎨 All Colors (0)</option>
+            <option value="red">🔴 Red (0)</option>
+            <option value="orange">🟠 Orange (0)</option>
+            <option value="yellow">🟡 Yellow (0)</option>
+            <option value="green">🟢 Green (0)</option>
+            <option value="blue">🔵 Blue (0)</option>
+            <option value="purple">🟣 Purple (0)</option>
+            <option value="pink">🌸 Pink (0)</option>
+            <option value="dark">⚫ Dark (0)</option>
+            <option value="light">⚪ Light (0)</option>
+          </select>
+        </div>
+
+        <span id="colorAnalysisBadge" title="Palette analysis in progress">🎨 0%</span>
+
+        <div class="dropdown-container">
+          <button class="filter-action-btn" id="keywordsMultiBtn" title="Filter by multiple keywords" style="display:inline-flex; align-items:center; gap:5px;">
+            🏷️ Keywords <span id="activeKwBadge" class="badge" style="display:none; background: var(--accent); color: #fff;">0</span> ▾
+          </button>
+          <div class="dropdown-menu" id="keywordsMultiMenu" style="width: 290px; max-height: 420px; padding: 8px; flex-direction: column; gap: 6px;">
+            <input type="text" id="keywordDropdownSearch" placeholder="Search all keywords..." style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:5px 8px; border-radius:6px; font-size:0.8rem; outline:none;">
+            
+            <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.75rem; color:var(--subtext); padding:0 2px;">
+              <label style="display:flex; align-items:center; gap:4px; cursor:pointer;" title="Check to require all selected tags; uncheck to match any">
+                <input type="checkbox" id="keywordModeMatchAll" checked style="cursor:pointer;"> Match ALL (AND)
+              </label>
+              <button type="button" id="clearKeywordsFilterBtn" style="background:none; border:none; color:var(--accent); cursor:pointer; font-size:0.75rem;">Clear All</button>
+            </div>
+
+            <div id="keywordDropdownList" style="overflow-y:auto; max-height:280px; display:flex; flex-direction:column; gap:2px;"></div>
+          </div>
+        </div>
+
+        <!-- Sorting -->
+        <div class="dropdown-container custom-dropdown" data-select="sortSelect" title="Sort Items">
+          <button type="button" class="filter-action-btn custom-dropdown-btn">⇅ 📅 Newest First ▾</button>
+          <div class="dropdown-menu custom-dropdown-menu"></div>
+          <select id="sortSelect" style="display:none;">
+            <option value="newest">📅 Newest First</option>
+            <option value="oldest">⌛ Oldest First</option>
+            <option value="author">👤 Author (A-Z)</option>
+            <option value="shuffle">🔀 Shuffle Order</option>
+          </select>
+        </div>
+
+        <!-- Badge Visibility Dropdown with Rarity -->
+        <div class="dropdown-container">
+          <button class="filter-action-btn" id="badgeVisibilityBtn" title="Show or hide overlay badges" style="display:inline-flex; align-items:center; gap:4px;">
+            🏷️ Badges ▾
+          </button>
+          <div class="dropdown-menu" id="badgeVisibilityMenu">
+            <label class="dropdown-item" style="cursor: pointer;">
+              <input type="checkbox" id="chkShowRarity" checked style="margin-right: 6px; cursor: pointer;"> Rarity (SSR/SR/R/N)
+            </label>
+            <label class="dropdown-item" style="cursor: pointer;">
+              <input type="checkbox" id="chkShowPage" checked style="margin-right: 6px; cursor: pointer;"> Page Numbers
+            </label>
+            <label class="dropdown-item" style="cursor: pointer;">
+              <input type="checkbox" id="chkShowPlatform" checked style="margin-right: 6px; cursor: pointer;"> Platform
+            </label>
+            <label class="dropdown-item" style="cursor: pointer;">
+              <input type="checkbox" id="chkShowColor" checked style="margin-right: 6px; cursor: pointer;"> Dominant Color
+            </label>
+          </div>
+        </div>
+
+        <button id="shuffleBtn" class="filter-action-btn" title="Randomize gallery order">🔀 Shuffle</button>
+        <button id="resetAllFiltersBtn" class="filter-action-btn" title="Reset all filters">Reset</button>
+      </div>
+    </div>
+
+    <!-- Active Keywords Chip Bar -->
+    <div class="active-keywords-bar" id="activeKeywordsBar">
+      <span style="font-size: 0.75rem; color: var(--subtext);">Filtered Keywords:</span>
+      <div id="activeKeywordsChips" style="display: flex; flex-wrap: wrap; gap: 5px;"></div>
+      <button id="clearAllChipsBtn" style="background:none; border:none; color:var(--accent); font-size:0.75rem; cursor:pointer; text-decoration:underline;">Clear</button>
+    </div>
+
+    <div id="dropzone">
+      <div style="font-size: 1.2rem; font-weight: 600; margin-bottom: 0.4rem; color: var(--text-bold);">Universal Art & Likes Gallery</div>
+      <div>Drop your <strong>.json</strong> files here (Twitter / X, Pixiv, Pinterest, or DeviantArt)</div>
+      <div style="font-size: 0.8rem; margin-top: 0.6rem; opacity: 0.75;">Select or drop multiple files simultaneously to merge collections.</div>
+    </div>
+
+    <div class="gallery-container" id="gallery"></div>
+  </div>
+
+  <!-- GACHA TAB VIEW -->
+  <div id="gachaView" class="view-container">
+    
+    <!-- SELECT SUMMON BANNER BAR -->
+    <div class="gacha-banners-wrapper">
+      <div class="gacha-banners-title">✨ Select Summon Banner</div>
+      <div class="gacha-banners-grid" id="gachaBannersGrid">
+        
+        <!-- Banner 1: All Sites -->
+        <div class="gacha-banner-card banner-all active" data-banner="all">
+          <div class="banner-head">
+            <span class="banner-title">🌐 All Sites</span>
+          </div>
+          <p class="banner-desc">Universal summoning pool combining all imported artworks across all platforms.</p>
+          <div class="banner-footer">
+            <span>📦 Pool: <strong id="bannerPoolCountAll">0</strong> cards</span>
+          </div>
+        </div>
+
+        <!-- Banner 2: Twitter / X -->
+        <div class="gacha-banner-card banner-twitter" data-banner="twitter">
+          <div class="banner-head">
+            <span class="banner-title">🐦 Twitter / X</span>
+          </div>
+          <p class="banner-desc">Curated illustrations, character art, and social bookmarks from Twitter / X.</p>
+          <div class="banner-footer">
+            <span>📦 Pool: <strong id="bannerPoolCountTwitter">0</strong> cards</span>
+          </div>
+        </div>
+
+        <!-- Banner 3: Pixiv -->
+        <div class="gacha-banner-card banner-pixiv" data-banner="pixiv">
+          <div class="banner-head">
+            <span class="banner-title">🖌️ Pixiv</span>
+          </div>
+          <p class="banner-desc">Japanese manga styles, original concepts, and Pixiv illustrations.</p>
+          <div class="banner-footer">
+            <span>📦 Pool: <strong id="bannerPoolCountPixiv">0</strong> cards</span>
+          </div>
+        </div>
+
+        <!-- Banner 4: DeviantArt -->
+        <div class="gacha-banner-card banner-deviantart" data-banner="deviantart">
+          <div class="banner-head">
+            <span class="banner-title">🎨 DeviantArt</span>
+          </div>
+          <p class="banner-desc">Digital paintings, fantasy concepts, and community artwork deviations.</p>
+          <div class="banner-footer">
+            <span>📦 Pool: <strong id="bannerPoolCountDeviantArt">0</strong> cards</span>
+          </div>
+        </div>
+
+        <!-- Banner 5: Pinterest -->
+        <div class="gacha-banner-card banner-pinterest" data-banner="pinterest">
+          <div class="banner-head">
+            <span class="banner-title">📌 Pinterest</span>
+          </div>
+          <p class="banner-desc">Aesthetic pinboards, character sketches, and visual inspiration pins.</p>
+          <div class="banner-footer">
+            <span>📦 Pool: <strong id="bannerPoolCountPinterest">0</strong> cards</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Gacha Dashboard -->
+    <div class="gacha-dashboard">
+      <div class="gacha-top-row">
+        <div class="gacha-title-wrap">
+          <h2 id="activeBannerDashboardTitle">🎰 All Sites Summoning</h2>
+          <p id="activeBannerDashboardDesc">Deterministic rarity ranking: item ranks are mathematically fixed by source ID.</p>
+        </div>
+
+        <div class="gacha-actions-row">
+          <button id="gachaRoll1Btn" class="gacha-btn-roll1" title="Summon 1 card">🎲 Roll 1x</button>
+          <button id="gachaRoll10Btn" class="gacha-btn-roll10" title="Summon 10 cards with SR+ guarantee">✨ Roll 10x</button>
+        </div>
+      </div>
+
+      <div class="gacha-pool-stats-bar">
+        <span style="color: var(--subtext); font-weight: 500;">Banner Pool:</span>
+        <span class="rarity-pill-stat ssr">⭐ SSR (3%): <b id="gachaCountSSR">0</b></span>
+        <span class="rarity-pill-stat sr">⭐ SR (17%): <b id="gachaCountSR">0</b></span>
+        <span class="rarity-pill-stat r">⭐ R (35%): <b id="gachaCountR">0</b></span>
+        <span class="rarity-pill-stat n">⭐ N (45%): <b id="gachaCountN">0</b></span>
+        <span style="margin-left: auto; color: var(--subtext);">Total Rolls: <b id="gachaTotalRollsCount" style="color: var(--text-bold);">0</b></span>
+      </div>
+    </div>
+
+    <!-- GACHA RESULTS HEADER -->
+    <div class="gacha-results-header">
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+        <h3 id="gachaResultsLabel">Summon History & Inventory (0)</h3>
+
+        <div class="dropdown-container custom-dropdown" data-select="gachaSortSelect" title="Sort Gacha Results">
+          <button type="button" class="filter-action-btn custom-dropdown-btn">⇅ 🕒 Recently Summoned ▾</button>
+          <div class="dropdown-menu custom-dropdown-menu"></div>
+          <select id="gachaSortSelect" style="display:none;">
+            <option value="recent">🕒 Recently Summoned</option>
+            <option value="oldest">⌛ Oldest Summoned</option>
+            <option value="rarity-desc">🏆 Rarity (SSR → N)</option>
+            <option value="rarity-asc">⚪ Rarity (N → SSR)</option>
+            <option value="author">👤 Artist (A-Z)</option>
+          </select>
+        </div>
+
+        <div class="dropdown-container custom-dropdown" data-select="gachaRarityFilterSelect" title="Filter by Rarity">
+          <button type="button" class="filter-action-btn custom-dropdown-btn">⭐ All Rarities ▾</button>
+          <div class="dropdown-menu custom-dropdown-menu"></div>
+          <select id="gachaRarityFilterSelect" style="display:none;">
+            <option value="all">⭐ All Rarities</option>
+            <option value="SSR">🏆 SSR Only</option>
+            <option value="SR">✨ SR Only</option>
+            <option value="R">💎 R Only</option>
+            <option value="N">⚪ N Only</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="display:flex; align-items:center; gap:6px;">
+        <button id="gachaExportBtn" class="filter-action-btn" title="Export gacha inventory as JSON">📤 Export Gacha</button>
+        <button id="gachaClearInventoryBtn" class="filter-action-btn" style="font-size: 0.75rem;">Clear History</button>
+      </div>
+    </div>
+
+    <div class="gacha-results-grid" id="gachaResultsGrid">
+      <div class="empty-state-notice">
+        <div>Click <strong>Roll 1x</strong> or <strong>Roll 10x</strong> to summon artwork cards!</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FULLSCREEN GACHA SUMMONING OVERLAY & ANIMATION -->
+  <div class="gacha-summon-overlay" id="gachaSummonOverlay">
+    <canvas id="summonParticlesCanvas"></canvas>
+    <div class="summon-flash-layer" id="summonFlashLayer"></div>
+    
+    <div class="summon-stage" id="summonStageOrb">
+      <button class="summon-skip-btn" id="summonSkipBtn">Skip &rarr;</button>
+      <div class="summon-center-anchor" id="summonCrystalWrap">
+        <div class="summon-pulse-wave"></div>
+        <div class="summon-ring-outer"></div>
+        <div class="summon-ring-inner"></div>
+        <div class="summon-core-crystal pulse-r" id="summonCrystal"></div>
+      </div>
+      <div class="summon-instruction">Tap the crystal to summon!</div>
+    </div>
+
+    <div class="summon-stage" id="summonStageShowcase" style="display:none;">
+      <div class="showcase-header">
+        <h2>✨ Summon Results</h2>
+        <button class="btn" id="summonCloseBtn">Collect & Return</button>
+      </div>
+      <div class="summon-cards-container" id="summonCardsContainer"></div>
+    </div>
+  </div>
+
+  <!-- POKEMON CARD 3D TILT MODAL (Global Mouse Tracking) -->
+  <div class="pokemon-modal" id="pokemonModal">
+    <button class="pokemon-close-btn" id="pokemonCloseBtn" title="Close card">&times;</button>
+    
+    <div class="pokemon-card-wrapper" id="pokemonCardWrapper">
+      <div class="pokemon-card-stage rarity-ssr" id="pokemonCardStage">
+        <span class="pokemon-card-top-pill ssr" id="pokemonCardRarityPill">SSR</span>
+        <div class="pokemon-card-holo" id="pokemonCardHolo"></div>
+        <img class="pokemon-card-art" id="pokemonCardArt" src="" alt="Card Display">
+      </div>
+
+      <div class="pokemon-card-actions">
+        <button class="pokemon-switch-btn" id="pokemonSwitchGalleryBtn">
+          🖼️ Switch to Gallery View &rarr;
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- FULLSCREEN IMPORT & COLOR EXTRACTION OVERLAY -->
+  <div class="import-loading-overlay" id="importLoadingOverlay">
+    <div class="import-modal-card">
+      <div class="loading-spinner"></div>
+      <div class="loading-title" id="loadingTitle">Processing Artworks</div>
+      <div class="loading-subtext" id="loadingSubtext">Loading images and extracting color palettes...</div>
+      <div class="loading-progress-track">
+        <div class="loading-progress-bar" id="importProgressBar"></div>
+      </div>
+      <div class="loading-stats" id="loadingStats">0%</div>
+      <button class="skip-loading-btn" id="skipLoadingBtn">Continue browsing in background</button>
+    </div>
+  </div>
+
+  <!-- STANDARD LIGHTBOX MODAL -->
+  <div class="modal" id="modal">
+    <div class="modal-box" onclick="event.stopPropagation()">
+      <button class="close-btn" id="closeBtn">&times;</button>
+      <div class="modal-media">
+        <img id="modalImg" src="" alt="Art detail">
+      </div>
+      <div class="modal-details">
+        <div class="author-info">
+          <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+            <span id="modalPagePill" class="page-pill" style="display: none;"></span>
+          </div>
+          <h3 id="modalAuthor"></h3>
+          <a id="modalHandle" class="handle" href="" target="_blank"></a>
+        </div>
+
+        <p id="modalText" class="post-text"></p>
+        <span id="modalDate" class="post-date"></span>
+
+        <div id="multiMediaWrap" style="display: none;">
+          <div style="font-size: 0.75rem; font-weight:600; color:var(--subtext); text-transform:uppercase;">Artwork Images / Multi-Page</div>
+          <div class="thumb-strip" id="postThumbs"></div>
+        </div>
+
+        <a id="modalLink" class="view-btn" href="" target="_blank">View Original &rarr;</a>
+        <button id="modalDeleteBtn" class="modal-delete-btn">🗑️ Delete Post</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

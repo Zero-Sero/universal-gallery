@@ -4,77 +4,116 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="referrer" content="no-referrer">
-  <title>Art Gallery & Tag Explorer</title>
+  <title>Universal Art Gallery & Explorer</title>
   <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
 
   <!-- TOP BAR -->
   <div class="top-bar">
-    <div class="left-controls">
+    <div class="left-controls" id="topBarControlsGroup">
       <div class="nav-tabs">
         <button id="tabGallery" class="nav-tab active">🖼️ Gallery</button>
+        <button id="tabCollections" class="nav-tab">
+          📁 Collection <span id="collectionsCountBadge" class="badge">0</span>
+        </button>
         <button id="tabGacha" class="nav-tab">
           🎰 Gacha <span id="gachaSummonedBadge" class="badge">0</span>
         </button>
       </div>
 
+      <!-- View Switcher -->
       <div class="view-toggle" id="galleryViewToggles">
         <button id="viewPosts" class="toggle-opt active">Cards</button>
         <button id="viewMedia" class="toggle-opt">Images</button>
       </div>
 
-      <!-- Column-Based Zoom Controls -->
+      <!-- Selection Mode Toggle -->
+      <button id="multiSelectToggleBtn" class="filter-action-btn" title="Toggle batch selection mode">☑️ Select</button>
+
+      <!-- Column Zoom Controls -->
       <div class="gallery-zoom-wrap" id="galleryZoomWrap">
         <button class="zoom-action-btn" id="galZoomMinus" title="Fewer columns (larger cards)">−</button>
         <span id="colCountLabel">4 cols</span>
         <button class="zoom-action-btn" id="galZoomPlus" title="More columns (smaller cards)">+</button>
       </div>
 
-      <!-- Counter Badge -->
-      <div class="counter-group">
-        <span class="badge" id="loadedCountBadge">No files loaded</span>
-        <span class="count" id="count"></span>
+      <!-- BRAND BADGE WITH COPYRIGHT ICON, DISCORD LOGO, ID: kazuki07 -->
+      <div class="brand-id-badge" title="Developer ID">
+        <span>©</span>
+        <svg class="discord-icon" viewBox="0 0 127.14 96.36">
+          <path d="M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,32.65-1.71,56.6.54,80.21h0A105.73,105.73,0,0,0,32.71,96.36,77.7,77.7,0,0,0,39.6,85.25a68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2a75.57,75.57,0,0,0,64.32,0c.87.71,1.76,1.39,2.66,2a68.68,68.68,0,0,1-10.87,5.19,77,77,0,0,0,6.89,11.1A105.25,105.25,0,0,0,126.6,80.22h0C129.24,52.84,122.09,29.11,107.7,8.07ZM42.45,65.69C36.18,65.69,31,60,31,53s5-12.74,11.43-12.74S54,46,53.89,53,48.84,65.69,42.45,65.69Zm42.24,0C78.41,65.69,73.25,60,73.25,53s5-12.74,11.44-12.74S96.23,46,96.12,53,91.08,65.69,84.69,65.69Z"/>
+        </svg>
+        <span>kazuki07</span>
       </div>
     </div>
 
     <div class="right-controls">
       <span id="saveProgress" class="save-status" style="display: none;"></span>
 
+      <!-- Profile Switcher & Manager Dropdown -->
+      <div class="dropdown-container">
+        <button class="btn" id="profileMenuBtn" title="Switch or manage gallery profiles">👤 <span id="activeProfileLabel">Default</span> ▾</button>
+        <div class="dropdown-menu" id="profileMenu">
+          <div style="font-size:0.72rem; font-weight:700; color:var(--subtext); padding:4px 8px; text-transform:uppercase;">Profiles</div>
+          <div id="profileListItems" style="display:flex; flex-direction:column; gap:2px; max-height:160px; overflow-y:auto;"></div>
+          <div style="height:1px; background:var(--border); margin:4px 0;"></div>
+          <button class="dropdown-item" id="createProfileBtn">➕ New Profile</button>
+          <button class="dropdown-item" id="renameProfileBtn">✏️ Rename Profile</button>
+          <button class="dropdown-item" id="exportProfileBtn">📤 Export Active Profile</button>
+          <button class="dropdown-item" id="importProfileBtn">📥 Import Profile JSON</button>
+          <button class="dropdown-item danger" id="resetProfileBtn">🔄 Reset Active Profile</button>
+          <button class="dropdown-item danger" id="deleteProfileBtn">🗑️ Delete Profile</button>
+        </div>
+      </div>
+
       <!-- Storage Dropdown -->
       <div class="dropdown-container">
-        <button class="btn" id="storageMenuBtn" title="Offline cache management">💾 Storage ▾</button>
+        <button class="btn" id="storageMenuBtn" title="Storage and data import/export">💾 Storage ▾</button>
         <div class="dropdown-menu" id="storageMenu">
           <button class="dropdown-item" id="saveOfflineBtn">💾 Save All Offline</button>
           <button class="dropdown-item" id="saveGachaStateBtn">🎰 Save Gacha Progress</button>
-          <button class="dropdown-item danger" id="clearCacheBtn">🗑️ Clear Cache</button>
+          <button class="dropdown-item" id="importGachaMenuBtn">📥 Import Gacha Inventory</button>
+          <button class="dropdown-item" id="importColsMenuBtn">📥 Import Collections</button>
+          <button class="dropdown-item" id="actionLogsMenuBtn">📜 Action Logs</button>
+          <button class="dropdown-item danger" id="clearCacheBtn">🗑️ Clear Offline Cache</button>
         </div>
       </div>
 
       <!-- Export Dropdown -->
       <div class="dropdown-container">
-        <button class="btn" id="exportMenuBtn" title="Export posts as JSON">📤 Export ▾</button>
+        <button class="btn" id="exportMenuBtn" title="Export data as JSON">📤 Export ▾</button>
         <div class="dropdown-menu" id="exportMenu">
-          <button class="dropdown-item" id="exportAllBtn">📦 Export All Combined</button>
-          <button class="dropdown-item" id="exportFilteredBtn">🔍 Export Current Filtered</button>
+          <button class="dropdown-item" id="exportAllBtn">📦 Export All (With Tags)</button>
+          <button class="dropdown-item" id="exportFilteredBtn">🔍 Export Filtered (With Tags)</button>
           <button class="dropdown-item" id="exportGachaMenuBtn">🎰 Export Gacha Inventory</button>
+          <button class="dropdown-item" id="exportColsMenuBtn">📁 Export Collections</button>
         </div>
       </div>
 
-      <button class="btn" id="loadFilesBtn">📄 Load JSON File(s)</button>
+      <!-- Hidden File Inputs -->
       <input type="file" id="fileInput" accept=".json" multiple>
+      <input type="file" id="gachaFileInput" accept=".json">
+      <input type="file" id="collectionsFileInput" accept=".json">
+      <input type="file" id="profileFileInput" accept=".json">
 
-      <!-- Theme Switcher & Secret Code Dropdown -->
-      <div class="dropdown-container" id="themeToggleContainer">
-        <button id="themeToggle" class="theme-btn" title="Toggle Theme (Hold for Secret Codes)">🌙</button>
-        <div class="dropdown-menu" id="secretCodeMenu" style="right: 0; left: auto; padding: 10px; width: 220px;">
-          <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-bold); margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between;">
-            <span>🔒 SECRET CODE</span>
-            <span id="closeSecretMenuBtn" style="cursor: pointer; color: var(--subtext); font-size: 0.95rem;">&times;</span>
+      <!-- Load Button & Theme Toggle -->
+      <div class="load-theme-group">
+        <button class="btn" id="loadFilesBtn">📄 Load JSON</button>
+
+        <!-- Theme Switcher & Secret Code Dropdown -->
+        <div class="dropdown-container" id="themeToggleContainer">
+          <button id="themeToggle" class="theme-btn" title="Toggle Theme (Hold for Secret Codes)">🌙</button>
+          <div class="dropdown-menu" id="secretCodeMenu" style="right: 0; left: auto; padding: 10px; width: 220px;">
+            <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-bold); margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between;">
+              <span>🔒 SECRET CODE</span>
+              <span id="closeSecretMenuBtn" style="cursor: pointer; color: var(--subtext); font-size: 0.95rem;">&times;</span>
+            </div>
+            <input type="text" id="secretCodeInput" placeholder="ENTER CODE..." style="width: 100%; text-transform: uppercase; background: var(--bg); border: 1px solid var(--border); color: var(--text-bold); padding: 6px 8px; border-radius: 6px; font-size: 0.8rem; font-weight: 700; outline: none; letter-spacing: 0.5px;">
+            <div id="secretCodeMsg" style="font-size: 0.7rem; margin-top: 5px; display: none;"></div>
+            <button type="button" id="applySecretCodeBtn" class="btn" style="width: 100%; justify-content: center; margin-top: 8px; padding: 5px 0; font-size: 0.78rem; font-weight: 600;">Apply Code</button>
           </div>
-          <input type="text" id="secretCodeInput" placeholder="ENTER CODE..." style="width: 100%; text-transform: uppercase; background: var(--bg); border: 1px solid var(--border); color: var(--text-bold); padding: 6px 8px; border-radius: 6px; font-size: 0.8rem; font-weight: 700; outline: none; letter-spacing: 0.5px;">
-          <div id="secretCodeMsg" style="font-size: 0.7rem; margin-top: 5px; display: none;"></div>
-          <button type="button" id="applySecretCodeBtn" class="btn" style="width: 100%; justify-content: center; margin-top: 8px; padding: 5px 0; font-size: 0.78rem; font-weight: 600;">Apply Code</button>
         </div>
       </div>
     </div>
@@ -85,12 +124,17 @@
     <div class="gallery-sub-bar" id="gallerySubBar" style="display: none;">
       <div class="search-box-wrap">
         <span class="search-icon">🔍</span>
-        <input type="text" id="gallerySearchInput" placeholder="Search title, artist, handle, tags..." autocomplete="off">
+        <input type="text" id="gallerySearchInput" placeholder="Search title, artist, tags, personal notes..." autocomplete="off">
         <button id="clearSearchBtn" class="clear-search-btn" style="display:none;" title="Clear search">&times;</button>
       </div>
 
+      <div class="counter-group" id="galleryCounterGroup">
+        <span class="badge" id="loadedCountBadge">No files loaded</span>
+        <span class="count" id="count"></span>
+      </div>
+
       <div class="filter-controls-wrap">
-        <!-- Platform Filter -->
+        <!-- Filter by Platform -->
         <div class="dropdown-container custom-dropdown" data-select="platformFilterSelect" title="Filter by Platform">
           <button type="button" class="filter-action-btn custom-dropdown-btn">🌐 All Platforms (0) ▾</button>
           <div class="dropdown-menu custom-dropdown-menu"></div>
@@ -100,19 +144,19 @@
             <option value="pixiv">🖌️ Pixiv (0)</option>
             <option value="pinterest">📌 Pinterest (0)</option>
             <option value="deviantart">🎨 DeviantArt (0)</option>
+            <option value="safebooru">📗 Safebooru (0)</option>
+            <option value="rule34">🔞 Rule 34 (0)</option>
           </select>
         </div>
 
-        <!-- Artist Filter -->
         <div class="dropdown-container custom-dropdown" data-select="artistFilterSelect" title="Filter by Artist">
           <button type="button" class="filter-action-btn custom-dropdown-btn">👤 All Artists (0) ▾</button>
-          <div class="dropdown-menu custom-dropdown-menu" style="max-height: 280px; overflow-y: auto;"></div>
+          <div class="dropdown-menu custom-dropdown-menu"></div>
           <select id="artistFilterSelect" style="display:none;">
             <option value="all">👤 All Artists (0)</option>
           </select>
         </div>
 
-        <!-- Aspect Ratio Filter -->
         <div class="dropdown-container custom-dropdown" data-select="aspectFilterSelect" title="Filter by Aspect Ratio">
           <button type="button" class="filter-action-btn custom-dropdown-btn">📐 All Ratios (0) ▾</button>
           <div class="dropdown-menu custom-dropdown-menu"></div>
@@ -124,10 +168,9 @@
           </select>
         </div>
 
-        <!-- Dominant Color Filter -->
         <div class="dropdown-container custom-dropdown" data-select="colorFilterSelect" title="Filter by Dominant Color">
           <button type="button" class="filter-action-btn custom-dropdown-btn">🎨 All Colors (0) ▾</button>
-          <div class="dropdown-menu custom-dropdown-menu" style="max-height: 280px; overflow-y: auto;"></div>
+          <div class="dropdown-menu custom-dropdown-menu"></div>
           <select id="colorFilterSelect" style="display:none;">
             <option value="all">🎨 All Colors (0)</option>
             <option value="red">🔴 Red (0)</option>
@@ -144,9 +187,32 @@
 
         <span id="colorAnalysisBadge" title="Palette analysis in progress">🎨 0%</span>
 
+        <!-- Custom User Tags Dropdown -->
         <div class="dropdown-container">
-          <button class="filter-action-btn" id="keywordsMultiBtn" title="Filter by multiple keywords" style="display:inline-flex; align-items:center; gap:5px;">
-            🏷️ Keywords <span id="activeKwBadge" class="badge" style="display:none; background: var(--accent); color: #fff;">0</span> ▾
+          <button class="filter-action-btn" id="customTagsMultiBtn" title="Filter by user tags" style="display:inline-flex; align-items:center; gap:5px;">
+            🏷️ Tags <span id="activeUserTagsBadge" class="badge" style="display:none; background: var(--accent); color: #fff;">0</span> ▾
+          </button>
+          <div class="dropdown-menu" id="customTagsMultiMenu" style="width: 280px; max-height: 420px; padding: 8px; flex-direction: column; gap: 6px;">
+            <div style="display: flex; gap: 5px;">
+              <input type="text" id="createNewTagInput" placeholder="New tag name..." style="flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 5px 8px; border-radius: 6px; font-size: 0.8rem; outline: none;">
+              <button type="button" id="createNewTagBtn" class="btn" style="padding: 5px 10px; font-size: 0.78rem; font-weight: 600; background: var(--accent); color: #fff;">+ Tag</button>
+            </div>
+            <input type="text" id="customTagDropdownSearch" placeholder="Search custom tags..." style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:5px 8px; border-radius:6px; font-size:0.8rem; outline:none;">
+            <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.75rem; color:var(--subtext); padding:0 2px; gap: 6px;">
+              <span>Created Tags</span>
+              <div style="display:flex; align-items:center; gap: 6px;">
+                <button type="button" id="clearUserTagsFilterBtn" style="background:none; border:none; color:var(--accent); cursor:pointer; font-size:0.75rem;">Clear Active</button>
+                <button type="button" id="wipeAllUserTagsBtn" style="background:none; border:none; color:#f85149; cursor:pointer; font-size:0.75rem; font-weight:600;" title="Permanently delete all custom tags from every card">Wipe All</button>
+              </div>
+            </div>
+            <div id="customTagDropdownList" style="overflow-y:auto; max-height:240px; display:flex; flex-direction:column; gap:2px;"></div>
+          </div>
+        </div>
+
+        <!-- Automatic Keywords Dropdown -->
+        <div class="dropdown-container">
+          <button class="filter-action-btn" id="keywordsMultiBtn" title="Filter by keywords" style="display:inline-flex; align-items:center; gap:5px;">
+            #️⃣ Keywords <span id="activeKwBadge" class="badge" style="display:none; background: var(--accent); color: #fff;">0</span> ▾
           </button>
           <div class="dropdown-menu" id="keywordsMultiMenu" style="width: 290px; max-height: 420px; padding: 8px; flex-direction: column; gap: 6px;">
             <input type="text" id="keywordDropdownSearch" placeholder="Search all keywords..." style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:5px 8px; border-radius:6px; font-size:0.8rem; outline:none;">
@@ -162,7 +228,6 @@
           </div>
         </div>
 
-        <!-- Sorting -->
         <div class="dropdown-container custom-dropdown" data-select="sortSelect" title="Sort Items">
           <button type="button" class="filter-action-btn custom-dropdown-btn">⇅ 📅 Newest First ▾</button>
           <div class="dropdown-menu custom-dropdown-menu"></div>
@@ -174,14 +239,13 @@
           </select>
         </div>
 
-        <!-- Badge Visibility Dropdown with Rarity -->
         <div class="dropdown-container">
-          <button class="filter-action-btn" id="badgeVisibilityBtn" title="Show or hide overlay badges" style="display:inline-flex; align-items:center; gap:4px;">
+          <button class="filter-action-btn" id="badgeVisibilityBtn" title="Show or hide overlay badges and glow" style="display:inline-flex; align-items:center; gap:4px;">
             🏷️ Badges ▾
           </button>
           <div class="dropdown-menu" id="badgeVisibilityMenu">
             <label class="dropdown-item" style="cursor: pointer;">
-              <input type="checkbox" id="chkShowRarity" checked style="margin-right: 6px; cursor: pointer;"> Rarity (SSR/SR/R/N)
+              <input type="checkbox" id="chkShowRarity" checked style="margin-right: 6px; cursor: pointer;"> Rarity (SSR/SR/R/C & Glow)
             </label>
             <label class="dropdown-item" style="cursor: pointer;">
               <input type="checkbox" id="chkShowPage" checked style="margin-right: 6px; cursor: pointer;"> Page Numbers
@@ -202,160 +266,284 @@
 
     <!-- Active Keywords Chip Bar -->
     <div class="active-keywords-bar" id="activeKeywordsBar">
-      <span style="font-size: 0.75rem; color: var(--subtext);">Filtered Keywords:</span>
+      <span style="font-size: 0.75rem; color: var(--subtext);">Filters:</span>
       <div id="activeKeywordsChips" style="display: flex; flex-wrap: wrap; gap: 5px;"></div>
       <button id="clearAllChipsBtn" style="background:none; border:none; color:var(--accent); font-size:0.75rem; cursor:pointer; text-decoration:underline;">Clear</button>
     </div>
 
     <div id="dropzone">
       <div style="font-size: 1.2rem; font-weight: 600; margin-bottom: 0.4rem; color: var(--text-bold);">Universal Art & Likes Gallery</div>
-      <div>Drop your <strong>.json</strong> files here (Twitter / X, Pixiv, Pinterest, or DeviantArt)</div>
-      <div style="font-size: 0.8rem; margin-top: 0.6rem; opacity: 0.75;">Select or drop multiple files simultaneously to merge collections.</div>
+      <div>Drop your <strong>.json</strong> files here (Twitter / X, Pixiv, Pinterest, DeviantArt, Safebooru, or Rule 34)</div>
+      <div style="font-size: 0.8rem; margin-top: 0.6rem; opacity: 0.75;">Automatic deduplication, HD resolution probing, and metadata extraction enabled.</div>
     </div>
 
     <div class="gallery-container" id="gallery"></div>
   </div>
 
+  <!-- COLLECTIONS VIEW -->
+  <div id="collectionsView" class="view-container" style="display: none; padding: 1.25rem 1.5rem; max-width: 1400px; margin: 0 auto;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.8rem; flex-wrap: wrap; gap: 10px;">
+      <div>
+        <h2 style="font-size: 1.3rem; color: var(--text-bold);">📁 Custom Collections</h2>
+        <p style="font-size: 0.82rem; color: var(--subtext);">Pure collection space without badges, glow or external filters</p>
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+        <button id="createNewColBtn" class="btn" style="background: var(--accent); color: #fff; font-weight: 600;">+ New Collection</button>
+        <button id="exportColsBtn" class="filter-action-btn" title="Export all collections to JSON">📤 Export Collections</button>
+        <button id="importColsBtn" class="filter-action-btn" title="Import collections from JSON">📥 Import Collections</button>
+      </div>
+    </div>
+
+    <div class="collections-shelf" id="collectionsShelf"></div>
+
+    <div id="activeCollectionDetails" style="display: none; margin-top: 1.5rem;">
+      <div class="active-col-bar">
+        <div>
+          <h3 id="activeColTitle" style="font-size: 1.2rem; color: var(--text-bold);"></h3>
+          <p id="activeColDesc" style="font-size: 0.8rem; color: var(--subtext);"></p>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button id="renameActiveColBtn" class="filter-action-btn">✏️ Rename</button>
+          <button id="deleteActiveColBtn" class="filter-action-btn" style="color: #f85149;">🗑️ Delete Collection</button>
+        </div>
+      </div>
+      <div class="gallery-container" id="collectionGalleryGrid" style="padding: 0;"></div>
+    </div>
+  </div>
+
   <!-- GACHA TAB VIEW -->
   <div id="gachaView" class="view-container">
-    
-    <!-- SELECT SUMMON BANNER BAR -->
-    <div class="gacha-banners-wrapper">
-      <div class="gacha-banners-title">✨ Select Summon Banner</div>
-      <div class="gacha-banners-grid" id="gachaBannersGrid">
-        
-        <!-- Banner 1: All Sites -->
-        <div class="gacha-banner-card banner-all active" data-banner="all">
-          <div class="banner-head">
-            <span class="banner-title">🌐 All Sites</span>
-          </div>
-          <p class="banner-desc">Universal summoning pool combining all imported artworks across all platforms.</p>
-          <div class="banner-footer">
-            <span>📦 Pool: <strong id="bannerPoolCountAll">0</strong> cards</span>
-          </div>
-        </div>
-
-        <!-- Banner 2: Twitter / X -->
-        <div class="gacha-banner-card banner-twitter" data-banner="twitter">
-          <div class="banner-head">
-            <span class="banner-title">🐦 Twitter / X</span>
-          </div>
-          <p class="banner-desc">Curated illustrations, character art, and social bookmarks from Twitter / X.</p>
-          <div class="banner-footer">
-            <span>📦 Pool: <strong id="bannerPoolCountTwitter">0</strong> cards</span>
-          </div>
-        </div>
-
-        <!-- Banner 3: Pixiv -->
-        <div class="gacha-banner-card banner-pixiv" data-banner="pixiv">
-          <div class="banner-head">
-            <span class="banner-title">🖌️ Pixiv</span>
-          </div>
-          <p class="banner-desc">Japanese manga styles, original concepts, and Pixiv illustrations.</p>
-          <div class="banner-footer">
-            <span>📦 Pool: <strong id="bannerPoolCountPixiv">0</strong> cards</span>
-          </div>
-        </div>
-
-        <!-- Banner 4: DeviantArt -->
-        <div class="gacha-banner-card banner-deviantart" data-banner="deviantart">
-          <div class="banner-head">
-            <span class="banner-title">🎨 DeviantArt</span>
-          </div>
-          <p class="banner-desc">Digital paintings, fantasy concepts, and community artwork deviations.</p>
-          <div class="banner-footer">
-            <span>📦 Pool: <strong id="bannerPoolCountDeviantArt">0</strong> cards</span>
-          </div>
-        </div>
-
-        <!-- Banner 5: Pinterest -->
-        <div class="gacha-banner-card banner-pinterest" data-banner="pinterest">
-          <div class="banner-head">
-            <span class="banner-title">📌 Pinterest</span>
-          </div>
-          <p class="banner-desc">Aesthetic pinboards, character sketches, and visual inspiration pins.</p>
-          <div class="banner-footer">
-            <span>📦 Pool: <strong id="bannerPoolCountPinterest">0</strong> cards</span>
-          </div>
-        </div>
-
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
+      <div class="nav-tabs">
+        <button id="gachaSubTabSummon" class="nav-tab active">🎲 Summon Banners</button>
+        <button id="gachaSubTabCompendium" class="nav-tab">📖 Art Compendium</button>
       </div>
     </div>
 
-    <!-- Gacha Dashboard -->
-    <div class="gacha-dashboard">
-      <div class="gacha-top-row">
-        <div class="gacha-title-wrap">
-          <h2 id="activeBannerDashboardTitle">🎰 All Sites Summoning</h2>
-          <p id="activeBannerDashboardDesc">Deterministic rarity ranking: item ranks are mathematically fixed by source ID.</p>
-        </div>
+    <!-- Banner Summon Stage Wrapper -->
+    <div id="gachaSummonStageContainer">
+      <div class="gacha-banners-wrapper">
+        <div class="gacha-banners-title">✨ Select Summon Banner</div>
+        <div class="gacha-banners-grid" id="gachaBannersGrid">
+          <div class="gacha-banner-card banner-all active" data-banner="all">
+            <div class="banner-head">
+              <span class="banner-title">🌐 All Sites</span>
+            </div>
+            <p class="banner-desc">Universal summoning pool combining all imported artworks across all platforms.</p>
+            <div class="banner-footer">
+              <span>📦 Pool: <strong id="bannerPoolCountAll">0</strong> cards</span>
+            </div>
+          </div>
 
-        <div class="gacha-actions-row">
-          <button id="gachaRoll1Btn" class="gacha-btn-roll1" title="Summon 1 card">🎲 Roll 1x</button>
-          <button id="gachaRoll10Btn" class="gacha-btn-roll10" title="Summon 10 cards with SR+ guarantee">✨ Roll 10x</button>
+          <div class="gacha-banner-card banner-twitter" data-banner="twitter">
+            <div class="banner-head">
+              <span class="banner-title">🐦 Twitter / X</span>
+            </div>
+            <p class="banner-desc">Curated illustrations, character art, and social bookmarks from Twitter / X.</p>
+            <div class="banner-footer">
+              <span>📦 Pool: <strong id="bannerPoolCountTwitter">0</strong> cards</span>
+            </div>
+          </div>
+
+          <div class="gacha-banner-card banner-pixiv" data-banner="pixiv">
+            <div class="banner-head">
+              <span class="banner-title">🖌️ Pixiv</span>
+            </div>
+            <p class="banner-desc">Japanese anime & manga art styles, original concepts, and Pixiv illustrations.</p>
+            <div class="banner-footer">
+              <span>📦 Pool: <strong id="bannerPoolCountPixiv">0</strong> cards</span>
+            </div>
+          </div>
+
+          <div class="gacha-banner-card banner-deviantart" data-banner="deviantart">
+            <div class="banner-head">
+              <span class="banner-title">🎨 DeviantArt</span>
+            </div>
+            <p class="banner-desc">Digital paintings, fantasy concepts, and community artwork deviations.</p>
+            <div class="banner-footer">
+              <span>📦 Pool: <strong id="bannerPoolCountDeviantArt">0</strong> cards</span>
+            </div>
+          </div>
+
+          <div class="gacha-banner-card banner-pinterest" data-banner="pinterest">
+            <div class="banner-head">
+              <span class="banner-title">📌 Pinterest</span>
+            </div>
+            <p class="banner-desc">Aesthetic pinboards, character sketches, and visual inspiration pins.</p>
+            <div class="banner-footer">
+              <span>📦 Pool: <strong id="bannerPoolCountPinterest">0</strong> cards</span>
+            </div>
+          </div>
+
+          <div class="gacha-banner-card banner-safebooru" data-banner="safebooru">
+            <div class="banner-head">
+              <span class="banner-title">📗 Safebooru</span>
+            </div>
+            <p class="banner-desc">Safe-for-work community anime imagery, wallpaper art, and tagged archives.</p>
+            <div class="banner-footer">
+              <span>📦 Pool: <strong id="bannerPoolCountSafebooru">0</strong> cards</span>
+            </div>
+          </div>
+
+          <div class="gacha-banner-card banner-rule34" data-banner="rule34">
+            <div class="banner-head">
+              <span class="banner-title">🔞 Rule 34</span>
+            </div>
+            <p class="banner-desc">Curated adult deviations, pinup works, and tagged artwork collections.</p>
+            <div class="banner-footer">
+              <span>📦 Pool: <strong id="bannerPoolCountRule34">0</strong> cards</span>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="gacha-pool-stats-bar">
-        <span style="color: var(--subtext); font-weight: 500;">Banner Pool:</span>
-        <span class="rarity-pill-stat ssr">⭐ SSR (3%): <b id="gachaCountSSR">0</b></span>
-        <span class="rarity-pill-stat sr">⭐ SR (17%): <b id="gachaCountSR">0</b></span>
-        <span class="rarity-pill-stat r">⭐ R (35%): <b id="gachaCountR">0</b></span>
-        <span class="rarity-pill-stat n">⭐ N (45%): <b id="gachaCountN">0</b></span>
-        <span style="margin-left: auto; color: var(--subtext);">Total Rolls: <b id="gachaTotalRollsCount" style="color: var(--text-bold);">0</b></span>
+      <!-- Gacha Dashboard with Pity System -->
+      <div class="gacha-dashboard">
+        <div class="gacha-top-row">
+          <div class="gacha-title-wrap">
+            <h2 id="activeBannerDashboardTitle">🎰 All Sites Summoning</h2>
+            <p id="activeBannerDashboardDesc">Deterministic rarity ranking: item ranks are mathematically fixed by source ID.</p>
+          </div>
+
+          <div class="gacha-actions-row">
+            <button id="gachaRoll1Btn" class="gacha-btn-roll1" title="Summon 1 card">🎲 Roll 1x</button>
+            <button id="gachaRoll10Btn" class="gacha-btn-roll10" title="Summon 10 cards with SR+ guarantee">✨ Roll 10x</button>
+          </div>
+        </div>
+
+        <div class="pity-progress-wrap">
+          <div style="display: flex; justify-content: space-between; font-size: 0.76rem; font-weight: 700; color: var(--text-bold); margin-bottom: 2px;">
+            <span>SSR Pity Guarantee Meter (50 Pulls)</span>
+            <span id="pityProgressLabel">0 / 50</span>
+          </div>
+          <div class="pity-track"><div id="pityProgressBar" class="pity-bar"></div></div>
+        </div>
+
+        <div class="gacha-pool-stats-bar">
+          <span style="color: var(--subtext); font-weight: 500;">Banner Pool:</span>
+          <span class="rarity-pill-stat ssr">SSR (3%): <b id="gachaCountSSR">0</b></span>
+          <span class="rarity-pill-stat sr">SR (17%): <b id="gachaCountSR">0</b></span>
+          <span class="rarity-pill-stat r">R (35%): <b id="gachaCountR">0</b></span>
+          <span class="rarity-pill-stat n">C (45%): <b id="gachaCountN">0</b></span>
+          <span style="margin-left: auto; color: var(--subtext);">Total Rolls: <b id="gachaTotalRollsCount" style="color: var(--text-bold);">0</b></span>
+        </div>
+      </div>
+
+      <!-- GACHA RESULTS HEADER -->
+      <div class="gacha-results-header">
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <h3 id="gachaResultsLabel">Summon History & Inventory (0)</h3>
+
+          <!-- Gacha Grid Column Increase / Decrease Controls -->
+          <div class="gallery-zoom-wrap" id="gachaZoomWrap" title="Adjust gacha grid columns">
+            <button class="zoom-action-btn" id="gachaZoomMinus" title="Fewer columns (larger cards)">−</button>
+            <span id="gachaColCountLabel">5 cols</span>
+            <button class="zoom-action-btn" id="gachaZoomPlus" title="More columns (smaller cards)">+</button>
+          </div>
+
+          <!-- Gacha Layout Toggle: Grid vs Masonry (Without Emoji) -->
+          <div class="view-toggle" id="gachaLayoutToggle" title="Toggle Grid / Masonry layout">
+            <button id="gachaGridToggleOpt" class="toggle-opt active">Grid</button>
+            <button id="gachaMasonryToggleOpt" class="toggle-opt">Masonry</button>
+          </div>
+
+          <!-- Gacha Multi-select Mode Toggle -->
+          <button id="gachaMultiSelectToggleBtn" class="filter-action-btn" title="Toggle card selection mode">☑️ Select</button>
+
+          <div class="dropdown-container custom-dropdown" data-select="gachaSortSelect" title="Sort Gacha Results">
+            <button type="button" class="filter-action-btn custom-dropdown-btn">⇅ 🕒 Recently Summoned ▾</button>
+            <div class="dropdown-menu custom-dropdown-menu"></div>
+            <select id="gachaSortSelect" style="display:none;">
+              <option value="recent">🕒 Recently Summoned</option>
+              <option value="oldest">⌛ Oldest Summoned</option>
+              <option value="rarity-desc">🏆 Rarity (SSR → C)</option>
+              <option value="rarity-asc">⚪ Rarity (C → SSR)</option>
+              <option value="author">👤 Artist (A-Z)</option>
+            </select>
+          </div>
+
+          <div class="dropdown-container custom-dropdown" data-select="gachaRarityFilterSelect" title="Filter by Rarity">
+            <button type="button" class="filter-action-btn custom-dropdown-btn">All Rarities ▾</button>
+            <div class="dropdown-menu custom-dropdown-menu"></div>
+            <select id="gachaRarityFilterSelect" style="display:none;">
+              <option value="all">All Rarities</option>
+              <option value="SSR">SSR Only</option>
+              <option value="SR">SR Only</option>
+              <option value="R">R Only</option>
+              <option value="N">C Only</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:6px; flex-wrap: wrap;">
+          <button id="gachaImportBtn" class="filter-action-btn" title="Import gacha inventory from JSON">📥 Import Gacha</button>
+          <button id="gachaExportBtn" class="filter-action-btn" title="Export gacha inventory as JSON">📤 Export Gacha</button>
+          <button id="gachaClearInventoryBtn" class="filter-action-btn" style="font-size: 0.75rem;">Clear History</button>
+        </div>
+      </div>
+
+      <div class="gacha-results-grid" id="gachaResultsGrid">
+        <div class="empty-state-notice">
+          <div>Click <strong>Roll 1x</strong> or <strong>Roll 10x</strong> to summon artwork cards!</div>
+        </div>
       </div>
     </div>
 
-    <!-- GACHA RESULTS HEADER -->
-    <div class="gacha-results-header">
-      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-        <h3 id="gachaResultsLabel">Summon History & Inventory (0)</h3>
+    <!-- Compendium View with Categorized Rarity Sections -->
+    <div id="compendiumContainer" style="display: none;">
+      <div id="compendiumStatsBar" style="padding: 1.1rem; background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 1.5rem;"></div>
 
-        <div class="dropdown-container custom-dropdown" data-select="gachaSortSelect" title="Sort Gacha Results">
-          <button type="button" class="filter-action-btn custom-dropdown-btn">⇅ 🕒 Recently Summoned ▾</button>
-          <div class="dropdown-menu custom-dropdown-menu"></div>
-          <select id="gachaSortSelect" style="display:none;">
-            <option value="recent">🕒 Recently Summoned</option>
-            <option value="oldest">⌛ Oldest Summoned</option>
-            <option value="rarity-desc">🏆 Rarity (SSR → N)</option>
-            <option value="rarity-asc">⚪ Rarity (N → SSR)</option>
-            <option value="author">👤 Artist (A-Z)</option>
-          </select>
+      <div class="compendium-section" id="compSecSSR">
+        <div class="compendium-sec-header">
+          <div class="compendium-sec-title" style="color: var(--rarity-ssr);">SSR Artworks</div>
+          <div class="compendium-sec-progress" id="compProgressSSR">0 / 0 (0%)</div>
         </div>
-
-        <div class="dropdown-container custom-dropdown" data-select="gachaRarityFilterSelect" title="Filter by Rarity">
-          <button type="button" class="filter-action-btn custom-dropdown-btn">⭐ All Rarities ▾</button>
-          <div class="dropdown-menu custom-dropdown-menu"></div>
-          <select id="gachaRarityFilterSelect" style="display:none;">
-            <option value="all">⭐ All Rarities</option>
-            <option value="SSR">🏆 SSR Only</option>
-            <option value="SR">✨ SR Only</option>
-            <option value="R">💎 R Only</option>
-            <option value="N">⚪ N Only</option>
-          </select>
-        </div>
+        <div class="gacha-results-grid" id="compGridSSR"></div>
       </div>
 
-      <div style="display:flex; align-items:center; gap:6px;">
-        <button id="gachaExportBtn" class="filter-action-btn" title="Export gacha inventory as JSON">📤 Export Gacha</button>
-        <button id="gachaClearInventoryBtn" class="filter-action-btn" style="font-size: 0.75rem;">Clear History</button>
+      <div class="compendium-section" id="compSecSR">
+        <div class="compendium-sec-header">
+          <div class="compendium-sec-title" style="color: var(--rarity-sr);">SR Artworks</div>
+          <div class="compendium-sec-progress" id="compProgressSR">0 / 0 (0%)</div>
+        </div>
+        <div class="gacha-results-grid" id="compGridSR"></div>
       </div>
-    </div>
 
-    <div class="gacha-results-grid" id="gachaResultsGrid">
-      <div class="empty-state-notice">
-        <div>Click <strong>Roll 1x</strong> or <strong>Roll 10x</strong> to summon artwork cards!</div>
+      <div class="compendium-section" id="compSecR">
+        <div class="compendium-sec-header">
+          <div class="compendium-sec-title" style="color: var(--rarity-r);">R Artworks</div>
+          <div class="compendium-sec-progress" id="compProgressR">0 / 0 (0%)</div>
+        </div>
+        <div class="gacha-results-grid" id="compGridR"></div>
+      </div>
+
+      <div class="compendium-section" id="compSecN">
+        <div class="compendium-sec-header">
+          <div class="compendium-sec-title" style="color: var(--rarity-n);">C Artworks</div>
+          <div class="compendium-sec-progress" id="compProgressN">0 / 0 (0%)</div>
+        </div>
+        <div class="gacha-results-grid" id="compGridN"></div>
       </div>
     </div>
   </div>
 
-  <!-- FULLSCREEN GACHA SUMMONING OVERLAY & ANIMATION -->
+  <!-- FLOATING MULTI-SELECT ACTION BAR -->
+  <div id="batchActionBar" class="batch-action-bar">
+    <div class="batch-count-text"><span id="batchSelectedCount">0</span> selected</div>
+    <button id="batchAddToColBtn" class="batch-btn">📁 Add to Collection</button>
+    <button id="batchRemoveFromColBtn" class="batch-btn danger" style="display: none;">❌ Remove from Collection</button>
+    <button id="batchTagBtn" class="batch-btn">🏷️ Add Tag</button>
+    <button id="batchExportBtn" class="batch-btn">📤 Export</button>
+    <button id="batchDeleteBtn" class="batch-btn danger">🗑️ Delete</button>
+    <button id="batchCancelBtn" class="batch-btn cancel">✕ Deselect</button>
+  </div>
+
+  <!-- FULLSCREEN GACHA SUMMONING OVERLAY -->
   <div class="gacha-summon-overlay" id="gachaSummonOverlay">
     <canvas id="summonParticlesCanvas"></canvas>
-    <div class="summon-flash-layer" id="summonFlashLayer"></div>
     
+    <!-- Stage 1: Crystal Orb Summon Stage -->
     <div class="summon-stage" id="summonStageOrb">
-      <button class="summon-skip-btn" id="summonSkipBtn">Skip &rarr;</button>
       <div class="summon-center-anchor" id="summonCrystalWrap">
         <div class="summon-pulse-wave"></div>
         <div class="summon-ring-outer"></div>
@@ -365,6 +553,32 @@
       <div class="summon-instruction">Tap the crystal to summon!</div>
     </div>
 
+    <!-- Stage 2: Inspection Mode Pull Stepper (With Arrow Controls) -->
+    <div class="summon-stage" id="summonStageInspect" style="display:none;">
+      <canvas id="summonInspectAtmosphereCanvas"></canvas>
+      <button class="summon-skip-btn" id="summonInspectSkipBtn">Skip to Summary &rarr;</button>
+      
+      <!-- Gacha Left/Right Navigation Arrow Controls -->
+      <button type="button" class="gacha-inspect-nav-btn prev" id="summonInspectPrevBtn" title="Previous card">&#10094;</button>
+      <button type="button" class="gacha-inspect-nav-btn next" id="summonInspectNextBtn" title="Next card">&#10095;</button>
+
+      <div class="summon-inspect-wrapper" id="summonInspectWrapper">
+        <div class="summon-inspect-card-stage rarity-ssr" id="summonInspectCardStage">
+          <!-- Mystery shroud / card back shown when pulling SSR -->
+          <div class="ssr-shrouded-back" id="ssrShroudedBack" style="display:none;"></div>
+          <span class="pokemon-card-top-pill ssr" id="summonInspectRarityPill">SSR</span>
+          <div class="pokemon-card-holo" id="summonInspectHolo"></div>
+          <img class="summon-inspect-card-art" id="summonInspectArt" src="" alt="Pulled Card">
+        </div>
+      </div>
+
+      <div class="summon-inspect-controls">
+        <span id="summonInspectCounter" style="font-size:0.92rem; font-weight:700; color:#fff;">Card 1 / 10</span>
+        <div style="font-size:0.75rem; color:rgba(255,255,255,0.7); margin-top:4px;">Use arrows or tap anywhere to continue &rarr;</div>
+      </div>
+    </div>
+
+    <!-- Stage 3: Summary Showcase Stage -->
     <div class="summon-stage" id="summonStageShowcase" style="display:none;">
       <div class="showcase-header">
         <h2>✨ Summon Results</h2>
@@ -374,10 +588,15 @@
     </div>
   </div>
 
-  <!-- POKEMON CARD 3D TILT MODAL (Global Mouse Tracking) -->
+  <!-- POKEMON CARD 3D TILT & INSPECTION MODAL (WITH ARROW CONTROLS) -->
   <div class="pokemon-modal" id="pokemonModal">
+    <canvas id="pokemonAtmosphereCanvas"></canvas>
     <button class="pokemon-close-btn" id="pokemonCloseBtn" title="Close card">&times;</button>
     
+    <!-- Left / Right Navigation in Pokemon Card Mode -->
+    <button type="button" class="gacha-inspect-nav-btn prev" id="pokemonPrevBtn" title="Previous artwork">&#10094;</button>
+    <button type="button" class="gacha-inspect-nav-btn next" id="pokemonNextBtn" title="Next artwork">&#10095;</button>
+
     <div class="pokemon-card-wrapper" id="pokemonCardWrapper">
       <div class="pokemon-card-stage rarity-ssr" id="pokemonCardStage">
         <span class="pokemon-card-top-pill ssr" id="pokemonCardRarityPill">SSR</span>
@@ -393,7 +612,15 @@
     </div>
   </div>
 
-  <!-- FULLSCREEN IMPORT & COLOR EXTRACTION OVERLAY -->
+  <!-- QUICK FOCUS EXPAND OVERLAY -->
+  <div class="focus-blur-overlay" id="focusBlurOverlay">
+    <div class="focus-blur-container" onclick="event.stopPropagation()">
+      <button type="button" class="focus-blur-close-btn" id="focusBlurCloseBtn" title="Close focus view">&times;</button>
+      <img id="focusBlurImg" class="focus-blur-img" src="" alt="Enlarged Artwork Focus">
+    </div>
+  </div>
+
+  <!-- FULLSCREEN IMPORT OVERLAY -->
   <div class="import-loading-overlay" id="importLoadingOverlay">
     <div class="import-modal-card">
       <div class="loading-spinner"></div>
@@ -407,35 +634,163 @@
     </div>
   </div>
 
-  <!-- STANDARD LIGHTBOX MODAL -->
+  <!-- LIGHTBOX MODAL (WITH PREV/NEXT ARROWS & DIMENSION BADGE) -->
   <div class="modal" id="modal">
+    <!-- Left / Right Navigation Arrow Buttons -->
+    <button type="button" class="modal-nav-arrow prev" id="modalPrevBtn" title="Previous artwork (Left Arrow)">&#10094;</button>
+    <button type="button" class="modal-nav-arrow next" id="modalNextBtn" title="Next artwork (Right Arrow)">&#10095;</button>
+
     <div class="modal-box" onclick="event.stopPropagation()">
       <button class="close-btn" id="closeBtn">&times;</button>
-      <div class="modal-media">
+      <div class="modal-media" id="modalMedia">
         <img id="modalImg" src="" alt="Art detail">
       </div>
-      <div class="modal-details">
-        <div class="author-info">
-          <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
-            <span id="modalPagePill" class="page-pill" style="display: none;"></span>
+      <div class="modal-details" id="modalDetails">
+        <button class="modal-details-toggle" id="modalDetailsToggle" type="button">
+          <span class="drag-handle-bar"></span>
+          <div class="details-toggle-header">
+            <span id="drawerAuthorPreview" class="drawer-preview-text">ℹ️ Artwork Info</span>
+            <span class="drawer-arrow" id="drawerArrow">▲</span>
           </div>
-          <h3 id="modalAuthor"></h3>
-          <a id="modalHandle" class="handle" href="" target="_blank"></a>
+        </button>
+        <div class="modal-details-content">
+          <div class="author-info">
+            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px; flex-wrap: wrap;">
+              <span id="modalPagePill" class="page-pill" style="display: none;"></span>
+              <!-- Image Dimensions Badge -->
+              <span id="modalDimensionBadge" class="modal-dimension-badge" style="display: none;">
+                📐 <span id="modalDimText">0 × 0</span>
+              </span>
+            </div>
+            <h3 id="modalAuthor"></h3>
+            <a id="modalHandle" class="handle" href="" target="_blank"></a>
+          </div>
+
+          <p id="modalText" class="post-text"></p>
+          <span id="modalDate" class="post-date"></span>
+
+          <!-- Compact Tags & Notes Summary -->
+          <div class="user-meta-summary-card">
+            <div class="user-meta-summary-header">
+              <span class="user-meta-title">🏷️ Tags & Notes</span>
+              <button type="button" id="openUserMetaModalBtn" class="filter-action-btn" style="height:27px; padding:0 10px; font-size:0.75rem; color:var(--accent);">
+                ✏️ Edit Notes & Tags
+              </button>
+            </div>
+            <div id="modalTagsSummaryList" class="user-tags-container" style="max-height: 62px; overflow-y: auto;"></div>
+            <div id="modalNotePreview" class="user-note-preview" style="display: none;"></div>
+          </div>
+
+          <div id="multiMediaWrap" style="display: none;">
+            <div style="font-size: 0.75rem; font-weight:600; color:var(--subtext); text-transform:uppercase;">Artwork Images / Multi-Page</div>
+            <div class="thumb-strip" id="postThumbs"></div>
+          </div>
+
+          <div class="modal-action-btns-row">
+            <a id="modalLink" class="view-btn" href="" target="_blank">Go to post &rarr;</a>
+            <button type="button" id="modalAddToColBtn" class="modal-add-col-btn" title="Add this artwork to a collection">📁 Add to Collection</button>
+          </div>
+          <button id="modalDeleteBtn" class="modal-delete-btn">🗑️ Delete Post</button>
         </div>
-
-        <p id="modalText" class="post-text"></p>
-        <span id="modalDate" class="post-date"></span>
-
-        <div id="multiMediaWrap" style="display: none;">
-          <div style="font-size: 0.75rem; font-weight:600; color:var(--subtext); text-transform:uppercase;">Artwork Images / Multi-Page</div>
-          <div class="thumb-strip" id="postThumbs"></div>
-        </div>
-
-        <a id="modalLink" class="view-btn" href="" target="_blank">View Original &rarr;</a>
-        <button id="modalDeleteBtn" class="modal-delete-btn">🗑️ Delete Post</button>
       </div>
     </div>
   </div>
+
+  <!-- DEDICATED CUSTOM NOTES & TAGS MODAL PANEL -->
+  <div class="user-notes-modal-overlay" id="userNotesModal">
+    <div class="user-notes-modal-card" onclick="event.stopPropagation()">
+      <div class="user-notes-modal-header">
+        <h3 style="font-size: 1.05rem; color: var(--text-bold); display: flex; align-items: center; gap: 6px;">
+          📝 Custom Notes & Tags
+        </h3>
+        <button type="button" class="user-notes-close-btn" id="closeUserNotesModalBtn" title="Close notes">&times;</button>
+      </div>
+
+      <div class="user-notes-modal-body">
+        <div class="user-meta-section">
+          <div class="user-meta-title">🏷️ Custom Tags</div>
+          <div class="user-tags-container" id="modalTagsContainer" style="max-height: 120px; overflow-y: auto; padding: 2px 0;"></div>
+
+          <div class="user-meta-input-group" style="margin-top: 8px;">
+            <div class="user-tag-picker-wrap" id="modalTagPickerWrap">
+              <button type="button" class="user-tag-picker-btn" id="modalTagPickerBtn">
+                <span id="modalTagPickerLabel">Choose tag to add...</span>
+                <span>▾</span>
+              </button>
+              <div class="user-tag-picker-menu" id="modalTagPickerMenu">
+                <input type="text" id="modalTagPickerSearch" class="user-tag-picker-search" placeholder="Search or type tag name..." autocomplete="off">
+                <div class="user-tag-picker-list" id="modalTagPickerList"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="user-meta-section" style="margin-top: 10px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div class="user-meta-title">📝 Personal Notes</div>
+            <span id="modalNoteStatus" style="font-size: 0.72rem; color: var(--accent); opacity: 0; transition: opacity 0.2s;">✓ Saved</span>
+          </div>
+          <textarea id="modalNoteInput" class="user-meta-textarea" placeholder="Write private notes or thoughts about this artwork..." style="min-height: 90px;"></textarea>
+        </div>
+      </div>
+
+      <div class="user-notes-modal-footer">
+        <button type="button" class="btn" id="saveUserNotesDoneBtn" style="background: var(--accent); color: #fff; font-weight: 600; padding: 6px 18px;">
+          Done
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ACTION LOGS MODAL -->
+  <div class="action-logs-overlay" id="actionLogsModal">
+    <div class="action-logs-card" onclick="event.stopPropagation()">
+      <div class="action-logs-header">
+        <div class="action-logs-title">📜 Action & Activity Logs</div>
+        <button type="button" class="user-notes-close-btn" id="closeActionLogsBtn">&times;</button>
+      </div>
+      <div class="action-logs-toolbar">
+        <span style="font-size:0.78rem; color:var(--subtext);" id="actionLogsCountLabel">0 events recorded</span>
+        <div style="display:flex; gap:6px;">
+          <button type="button" id="clearActionLogsBtn" class="filter-action-btn" style="color:#f85149;">🗑️ Clear Logs</button>
+        </div>
+      </div>
+      <div class="action-logs-list" id="actionLogsList"></div>
+    </div>
+  </div>
+
+  <!-- CUSTOM DIALOG MODAL -->
+  <div class="custom-dialog-overlay" id="customDialogModal">
+    <div class="custom-dialog-card" onclick="event.stopPropagation()">
+      <div class="custom-dialog-header">
+        <div class="custom-dialog-title" id="customDialogTitle">Notification</div>
+        <button type="button" class="user-notes-close-btn" id="customDialogCloseX">&times;</button>
+      </div>
+      <div class="custom-dialog-body">
+        <div id="customDialogMessage"></div>
+        <input type="text" id="customDialogInput" class="custom-dialog-input" style="display: none;">
+        <select id="customDialogSelect" style="display: none;"></select>
+
+        <!-- Collection Custom Dropdown -->
+        <div id="customDialogSelectWrapper" class="dialog-select-wrapper" style="display: none;">
+          <button type="button" class="dialog-select-trigger" id="customDialogSelectTrigger">
+            <div class="dialog-select-label-wrap">
+              <span id="customDialogSelectLabel">Select target collection...</span>
+            </div>
+            <span class="dialog-select-arrow">▾</span>
+          </button>
+          <div class="dialog-select-menu" id="customDialogSelectMenu"></div>
+        </div>
+      </div>
+      <div class="custom-dialog-footer">
+        <button type="button" class="btn" id="customDialogCancelBtn" style="display: none;">Cancel</button>
+        <button type="button" class="btn" id="customDialogConfirmBtn" style="background: var(--accent); color: #fff; font-weight: 600;">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- FLOATING TOAST NOTIFICATION CONTAINER -->
+  <div id="toastContainer"></div>
 
   <script src="app.js"></script>
 </body>

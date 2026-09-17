@@ -21,6 +21,9 @@
         <button id="tabGacha" class="nav-tab">
           🎰 Gacha <span id="gachaSummonedBadge" class="badge">0</span>
         </button>
+        <button id="tabMarket" class="nav-tab">
+          📈 Market <span id="navWalletCreditsBadge" class="badge" style="background:var(--accent); color:#030712;">1,000 CR</span>
+        </button>
       </div>
 
       <!-- View Switcher -->
@@ -39,7 +42,7 @@
         <button class="zoom-action-btn" id="galZoomPlus" title="More columns (smaller cards)">+</button>
       </div>
 
-      <!-- BRAND BADGE WITH COPYRIGHT ICON, DISCORD LOGO, ID: kazuki07 -->
+      <!-- BRAND BADGE WITH DEVELOPER ID -->
       <div class="brand-id-badge" title="Developer ID">
         <span>©</span>
         <svg class="discord-icon" viewBox="0 0 127.14 96.36">
@@ -245,9 +248,6 @@
           </button>
           <div class="dropdown-menu" id="badgeVisibilityMenu">
             <label class="dropdown-item" style="cursor: pointer;">
-              <input type="checkbox" id="chkShowRarity" checked style="margin-right: 6px; cursor: pointer;"> Rarity (SSR/SR/R/C & Glow)
-            </label>
-            <label class="dropdown-item" style="cursor: pointer;">
               <input type="checkbox" id="chkShowPage" checked style="margin-right: 6px; cursor: pointer;"> Page Numbers
             </label>
             <label class="dropdown-item" style="cursor: pointer;">
@@ -312,7 +312,7 @@
   </div>
 
   <!-- GACHA TAB VIEW -->
-  <div id="gachaView" class="view-container">
+  <div id="gachaView" class="view-container" style="display: none;">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
       <div class="nav-tabs">
         <button id="gachaSubTabSummon" class="nav-tab active">🎲 Summon Banners</button>
@@ -406,8 +406,12 @@
           </div>
 
           <div class="gacha-actions-row">
-            <button id="gachaRoll1Btn" class="gacha-btn-roll1" title="Summon 1 card">🎲 Roll 1x</button>
-            <button id="gachaRoll10Btn" class="gacha-btn-roll10" title="Summon 10 cards with SR+ guarantee">✨ Roll 10x</button>
+            <button id="gachaRoll1Btn" class="gacha-btn-roll1" title="Summon 1 card (100 Credits)">
+              🎲 Roll 1x <span class="roll-cost-badge">100 CR</span>
+            </button>
+            <button id="gachaRoll10Btn" class="gacha-btn-roll10" title="Summon 10 cards (900 Credits)">
+              ✨ Roll 10x <span class="roll-cost-badge highlight">900 CR</span>
+            </button>
           </div>
         </div>
 
@@ -434,14 +438,14 @@
         <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
           <h3 id="gachaResultsLabel">Summon History & Inventory (0)</h3>
 
-          <!-- Gacha Grid Column Increase / Decrease Controls -->
+          <!-- Gacha Grid Column Controls -->
           <div class="gallery-zoom-wrap" id="gachaZoomWrap" title="Adjust gacha grid columns">
             <button class="zoom-action-btn" id="gachaZoomMinus" title="Fewer columns (larger cards)">−</button>
             <span id="gachaColCountLabel">5 cols</span>
             <button class="zoom-action-btn" id="gachaZoomPlus" title="More columns (smaller cards)">+</button>
           </div>
 
-          <!-- Gacha Layout Toggle: Grid vs Masonry (Without Emoji) -->
+          <!-- Gacha Layout Toggle: Grid vs Masonry -->
           <div class="view-toggle" id="gachaLayoutToggle" title="Toggle Grid / Masonry layout">
             <button id="gachaGridToggleOpt" class="toggle-opt active">Grid</button>
             <button id="gachaMasonryToggleOpt" class="toggle-opt">Masonry</button>
@@ -471,14 +475,15 @@
               <option value="SR">SR Only</option>
               <option value="R">R Only</option>
               <option value="N">C Only</option>
+              <option value="SHINY">✨ Shiny Only</option>
             </select>
           </div>
-        </div>
 
-        <div style="display:flex; align-items:center; gap:6px; flex-wrap: wrap;">
-          <button id="gachaImportBtn" class="filter-action-btn" title="Import gacha inventory from JSON">📥 Import Gacha</button>
-          <button id="gachaExportBtn" class="filter-action-btn" title="Export gacha inventory as JSON">📤 Export Gacha</button>
-          <button id="gachaClearInventoryBtn" class="filter-action-btn" style="font-size: 0.75rem;">Clear History</button>
+          <div style="display:flex; align-items:center; gap:6px; flex-wrap: wrap;">
+            <button id="gachaImportBtn" class="filter-action-btn" title="Import gacha inventory from JSON">📥 Import Gacha</button>
+            <button id="gachaExportBtn" class="filter-action-btn" title="Export gacha inventory as JSON">📤 Export Gacha</button>
+            <button id="gachaClearInventoryBtn" class="filter-action-btn" style="font-size: 0.75rem;">Clear History</button>
+          </div>
         </div>
       </div>
 
@@ -492,6 +497,14 @@
     <!-- Compendium View with Categorized Rarity Sections -->
     <div id="compendiumContainer" style="display: none;">
       <div id="compendiumStatsBar" style="padding: 1.1rem; background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 1.5rem;"></div>
+      
+      <!-- Compendium Layout Toggle -->
+      <div style="display: flex; justify-content: flex-end; align-items: center; margin-bottom: 1.2rem;">
+        <div class="view-toggle" id="compLayoutToggle" title="Toggle Grid / Masonry layout">
+          <button id="compGridToggleOpt" class="toggle-opt active">Grid</button>
+          <button id="compMasonryToggleOpt" class="toggle-opt">Masonry</button>
+        </div>
+      </div>
 
       <div class="compendium-section" id="compSecSSR">
         <div class="compendium-sec-header">
@@ -527,6 +540,116 @@
     </div>
   </div>
 
+  <!-- MARKET / TRADING VIEW -->
+  <div id="marketView" class="view-container" style="display: none;">
+    <!-- Daily Stipend Bar -->
+    <div class="daily-login-bar">
+      <div>
+        <div style="font-weight: 800; font-size: 1.05rem; color: var(--text-bold);">🏦 Central Bank Liquidity Portal</div>
+        <div style="font-size: 0.8rem; color: var(--subtext);">Claim your daily credit stipend or sell inventory duplicate cards to fund trading and rolls.</div>
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <button type="button" class="btn" id="dailyLoginClaimBtn" style="background: var(--accent); color: #040d1a; font-weight: 700;">
+          🎁 Claim Daily Stipend (+1,000 CR)
+        </button>
+      </div>
+    </div>
+
+    <div class="market-dashboard-grid">
+      <!-- Candlestick Chart Area -->
+      <div class="market-chart-card">
+        <div class="market-chart-header">
+          <div class="market-asset-info">
+            <span class="market-asset-symbol" id="chartSymbolLabel">$BOORU</span>
+            <span class="market-asset-price" id="chartPriceLabel">49.49</span>
+            <span class="market-asset-chg up" id="chartChangeLabel">+2.3%</span>
+          </div>
+
+          <!-- Asset Picker -->
+          <div style="display:flex; gap:6px;">
+            <button class="filter-action-btn active" id="btnAssetBooru" style="border-color:var(--accent); color:var(--text-bold);" onclick="switchActiveMarketAsset('BOORU')">$BOORU</button>
+            <button class="filter-action-btn" id="btnAssetPix" onclick="switchActiveMarketAsset('PIX')">$PIX</button>
+            <button class="filter-action-btn" id="btnAssetGacha" onclick="switchActiveMarketAsset('GACHA')">$GACHA</button>
+          </div>
+        </div>
+
+        <!-- 100% Guaranteed AI Oracle Forecast -->
+        <div class="market-oracle-bar" id="marketOracleBar">
+          <div class="oracle-badge">🔮 100% PREDICTION</div>
+          <div class="oracle-status bull" id="oracleStatusWrap">
+            <span id="oracleTrendIcon">🚀</span>
+            <span id="oraclePredictionText">GUARANTEED PUMP (+25%)</span>
+          </div>
+          <div class="oracle-advice buy" id="oracleAdvice">RECOMMENDATION: 🟢 BUY NOW</div>
+          <div class="oracle-timer" id="oracleTimer">⚡ SHORT-TERM • Ends in: ~20s</div>
+        </div>
+
+        <div class="market-canvas-container">
+          <canvas id="marketCanvas"></canvas>
+        </div>
+      </div>
+
+      <!-- Trading Desk Card -->
+      <div class="market-trade-card">
+        <div style="font-weight: 800; font-size: 1rem; color: var(--text-bold);">💼 Portfolio & Order Desk</div>
+
+        <div class="wallet-banner">
+          <div class="wallet-row">
+            <span style="color:var(--subtext);">Available Cash:</span>
+            <span class="wallet-amount" id="marketCashLabel">1,000 CR</span>
+          </div>
+          <div class="wallet-row" style="margin-top:4px;">
+            <span style="color:var(--subtext);">Active Holding:</span>
+            <span style="font-weight:700; color:#fff;" id="marketHoldingsLabel">0 shares</span>
+          </div>
+          <div class="wallet-row">
+            <span style="color:var(--subtext);">Avg Purchase:</span>
+            <span style="font-weight:700; color:#fbc02d;" id="marketAvgCostLabel">0.00</span>
+          </div>
+          <div class="wallet-row">
+            <span style="color:var(--subtext);">Active P/L:</span>
+            <span style="font-weight:700;" id="marketPnlLabel">0.00 (0.0%)</span>
+          </div>
+        </div>
+
+        <!-- Standalone Box for Registered Buy Holdings -->
+        <div class="holdings-standalone-card">
+          <div class="holdings-card-header">
+            <div class="holdings-card-title">
+              <span>📊 Your Stock Holdings</span>
+              <span id="holdingsCountPill" class="holdings-count-pill">0 lots</span>
+            </div>
+            <button type="button" id="btnSellAllPortfolio" class="quick-sell-all-btn">⚡ Sell All Positions</button>
+          </div>
+          <div id="holdingsList" class="holdings-list"></div>
+        </div>
+
+        <div class="trade-input-group" style="margin-top: 4px;">
+          <label for="tradeSharesInput">Order Size (Shares)</label>
+          <input type="number" id="tradeSharesInput" class="trade-input" min="1" value="10">
+        </div>
+
+        <div class="quick-pct-row">
+          <button type="button" class="quick-pct-btn" onclick="setTradePercent(25)">25%</button>
+          <button type="button" class="quick-pct-btn" onclick="setTradePercent(50)">50%</button>
+          <button type="button" class="quick-pct-btn" onclick="setTradePercent(75)">75%</button>
+          <button type="button" class="quick-pct-btn" onclick="setTradePercent(100)">MAX</button>
+        </div>
+
+        <!-- Full Width Execute Buy Button -->
+        <div class="trade-btn-grid">
+          <button type="button" class="btn-market-buy" id="btnBuyMarket">🟢 EXECUTE BUY ORDER</button>
+        </div>
+
+        <div style="font-size:0.75rem; color:var(--subtext); line-height:1.4; margin-top:4px;">
+          • Follow the <strong>100% Prediction</strong>: buy when green, sell when red.<br>
+          • <strong>Roll 1x</strong> costs 100 Credits | <strong>Roll 10x</strong> costs 900 Credits.<br>
+          • Click any stock in your holdings list to focus its chart.
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- FLOATING MULTI-SELECT ACTION BAR -->
   <div id="batchActionBar" class="batch-action-bar">
     <div class="batch-count-text"><span id="batchSelectedCount">0</span> selected</div>
@@ -553,12 +676,12 @@
       <div class="summon-instruction">Tap the crystal to summon!</div>
     </div>
 
-    <!-- Stage 2: Inspection Mode Pull Stepper (With Arrow Controls) -->
+    <!-- Stage 2: Inspection Mode Pull Stepper -->
     <div class="summon-stage" id="summonStageInspect" style="display:none;">
       <canvas id="summonInspectAtmosphereCanvas"></canvas>
       <button class="summon-skip-btn" id="summonInspectSkipBtn">Skip to Summary &rarr;</button>
       
-      <!-- Gacha Left/Right Navigation Arrow Controls -->
+      <!-- Gacha Left/Right Navigation Arrow Controls (Retained on Gacha Tab) -->
       <button type="button" class="gacha-inspect-nav-btn prev" id="summonInspectPrevBtn" title="Previous card">&#10094;</button>
       <button type="button" class="gacha-inspect-nav-btn next" id="summonInspectNextBtn" title="Next card">&#10095;</button>
 
@@ -588,12 +711,12 @@
     </div>
   </div>
 
-  <!-- POKEMON CARD 3D TILT & INSPECTION MODAL (WITH ARROW CONTROLS) -->
+  <!-- POKEMON CARD 3D TILT & INSPECTION MODAL -->
   <div class="pokemon-modal" id="pokemonModal">
     <canvas id="pokemonAtmosphereCanvas"></canvas>
     <button class="pokemon-close-btn" id="pokemonCloseBtn" title="Close card">&times;</button>
     
-    <!-- Left / Right Navigation in Pokemon Card Mode -->
+    <!-- Left / Right Navigation in Pokemon Card Mode (Retained on Gacha Tab) -->
     <button type="button" class="gacha-inspect-nav-btn prev" id="pokemonPrevBtn" title="Previous artwork">&#10094;</button>
     <button type="button" class="gacha-inspect-nav-btn next" id="pokemonNextBtn" title="Next artwork">&#10095;</button>
 
@@ -605,6 +728,9 @@
       </div>
 
       <div class="pokemon-card-actions">
+        <button type="button" class="pokemon-switch-btn btn-sell-single" id="pokemonSellCardBtn" title="Scrap this card for market credits">
+          💰 Scrap for <span id="pokemonSellPriceLabel">0</span> CR
+        </button>
         <button class="pokemon-switch-btn" id="pokemonSwitchGalleryBtn">
           🖼️ Switch to Gallery View &rarr;
         </button>
@@ -612,34 +738,8 @@
     </div>
   </div>
 
-  <!-- QUICK FOCUS EXPAND OVERLAY -->
-  <div class="focus-blur-overlay" id="focusBlurOverlay">
-    <div class="focus-blur-container" onclick="event.stopPropagation()">
-      <button type="button" class="focus-blur-close-btn" id="focusBlurCloseBtn" title="Close focus view">&times;</button>
-      <img id="focusBlurImg" class="focus-blur-img" src="" alt="Enlarged Artwork Focus">
-    </div>
-  </div>
-
-  <!-- FULLSCREEN IMPORT OVERLAY -->
-  <div class="import-loading-overlay" id="importLoadingOverlay">
-    <div class="import-modal-card">
-      <div class="loading-spinner"></div>
-      <div class="loading-title" id="loadingTitle">Processing Artworks</div>
-      <div class="loading-subtext" id="loadingSubtext">Loading images and extracting color palettes...</div>
-      <div class="loading-progress-track">
-        <div class="loading-progress-bar" id="importProgressBar"></div>
-      </div>
-      <div class="loading-stats" id="loadingStats">0%</div>
-      <button class="skip-loading-btn" id="skipLoadingBtn">Continue browsing in background</button>
-    </div>
-  </div>
-
-  <!-- LIGHTBOX MODAL (WITH PREV/NEXT ARROWS & DIMENSION BADGE) -->
+  <!-- LIGHTBOX MODAL (ARROWS REMOVED FOR CLEAN BROWSING) -->
   <div class="modal" id="modal">
-    <!-- Left / Right Navigation Arrow Buttons -->
-    <button type="button" class="modal-nav-arrow prev" id="modalPrevBtn" title="Previous artwork (Left Arrow)">&#10094;</button>
-    <button type="button" class="modal-nav-arrow next" id="modalNextBtn" title="Next artwork (Right Arrow)">&#10095;</button>
-
     <div class="modal-box" onclick="event.stopPropagation()">
       <button class="close-btn" id="closeBtn">&times;</button>
       <div class="modal-media" id="modalMedia">
@@ -769,7 +869,6 @@
       <div class="custom-dialog-body">
         <div id="customDialogMessage"></div>
         <input type="text" id="customDialogInput" class="custom-dialog-input" style="display: none;">
-        <select id="customDialogSelect" style="display: none;"></select>
 
         <!-- Collection Custom Dropdown -->
         <div id="customDialogSelectWrapper" class="dialog-select-wrapper" style="display: none;">

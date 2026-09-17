@@ -1,19 +1,31 @@
     // ===================================================
-    // ASYNC PRELOADER ENGINE
+    // ASYNC PRELOADER ENGINE (100% IN-MEMORY PRELOAD)
     // ===================================================
     const preloadedImageCache = new Map();
-    let isPreloadActive = false;
+    let isImportPreloadingActive = false;
 
-    async function preloadAllCardImages(items = []) {
+    async function preloadAllCardImages(items = [], progressCallback = null) {
       if (!items || !items.length) return;
 
       const queue = [...items];
       const CONCURRENCY = 6;
+      let loadedSoFar = 0;
+      const totalToLoad = queue.length;
 
       async function preloadWorker() {
         while (queue.length > 0) {
           const item = queue.shift();
-          if (!item || !item.imgUrl || preloadedImageCache.has(item.imgUrl)) continue;
+          if (!item || !item.imgUrl) {
+            loadedSoFar++;
+            if (progressCallback) progressCallback(loadedSoFar, totalToLoad);
+            continue;
+          }
+
+          if (preloadedImageCache.has(item.imgUrl)) {
+            loadedSoFar++;
+            if (progressCallback) progressCallback(loadedSoFar, totalToLoad);
+            continue;
+          }
 
           try {
             const cached = await getCachedBlob(item.imgUrl);
@@ -25,14 +37,19 @@
               const img = new Image();
               if (item.platform === 'twitter') img.crossOrigin = 'anonymous';
               img.decoding = 'async';
-              img.src = item.imgUrl;
-              await new Promise(r => {
-                img.onload = r;
-                img.onerror = r;
+              const loadedOk = await new Promise(r => {
+                img.onload = () => r(true);
+                img.onerror = () => r(false);
+                img.src = item.imgUrl;
               });
-              preloadedImageCache.set(item.imgUrl, item.imgUrl);
+              if (loadedOk) {
+                preloadedImageCache.set(item.imgUrl, item.imgUrl);
+              }
             }
           } catch (e) {}
+
+          loadedSoFar++;
+          if (progressCallback) progressCallback(loadedSoFar, totalToLoad);
         }
       }
 
@@ -181,63 +198,6 @@
       return item.imgUrl;
     }
 
-    async function ensureCardImageReady(card) {
-      if (!card) return Promise.resolve('');
-
-      if (!card._hdResolved && (card.platform === 'rule34' || card.platform === 'safebooru')) {
-        await resolvePostHdQuality(card);
-      }
-
-      if (!card.imgUrl) return Promise.resolve('');
-      
-      if (blobUrlMap.has(card.imgUrl)) {
-        return Promise.resolve(blobUrlMap.get(card.imgUrl));
-      }
-
-      return new Promise(async (resolve) => {
-        let resolved = false;
-        const finish = (url) => {
-          if (resolved) return;
-          resolved = true;
-          resolve(url);
-        };
-
-        const timer = setTimeout(() => finish(card.imgUrl), 600);
-
-        try {
-          const cached = await getCachedBlob(card.imgUrl);
-          if (cached) {
-            const objUrl = URL.createObjectURL(cached);
-            blobUrlMap.set(card.imgUrl, objUrl);
-            preloadedImageCache.set(card.imgUrl, objUrl);
-            clearTimeout(timer);
-            return finish(objUrl);
-          }
-        } catch (e) {}
-
-        const offscreenImg = new Image();
-        if (card.platform === 'twitter') offscreenImg.crossOrigin = 'anonymous';
-        offscreenImg.decoding = 'async';
-        offscreenImg.referrerPolicy = 'no-referrer';
-
-        offscreenImg.onload = async () => {
-          try {
-            if ('decode' in offscreenImg) await offscreenImg.decode();
-          } catch (_) {}
-          clearTimeout(timer);
-          preloadedImageCache.set(card.imgUrl, offscreenImg.src);
-          finish(offscreenImg.src);
-        };
-
-        offscreenImg.onerror = () => {
-          clearTimeout(timer);
-          finish(card.fallbackUrl || card.imgUrl);
-        };
-
-        offscreenImg.src = card.imgUrl;
-      });
-    }
-
     function eagerPrefetchNextCards(startIndex = 0) {
       if (!pendingSummonPull || !pendingSummonPull.length) return;
       const lookahead = pendingSummonPull.slice(startIndex, startIndex + 4);
@@ -245,21 +205,34 @@
     }
 
     // ===================================================
-    // PROFILE MANAGEMENT ENGINE
+    // PROFILE MANAGEMENT ENGINE (PERMANENT DEFAULT PROFILE)
     // ===================================================
     const PROFILES_STORAGE_KEY = 'universal_gallery_profiles';
     const ACTIVE_PROFILE_KEY = 'universal_gallery_active_profile';
 
     function getStoredProfiles() {
+      let profiles = [];
       try {
         const raw = localStorage.getItem(PROFILES_STORAGE_KEY);
-        if (raw) return JSON.parse(raw);
-      } catch (e) {}
-      return [{ id: 'default', name: 'Default Profile', createdAt: Date.now() }];
+        if (raw) profiles = JSON.parse(raw);
+      } catch (e) {
+        profiles = [];
+      }
+
+      // Guarantee that the Default profile always exists and cannot be removed
+      if (!Array.isArray(profiles) || !profiles.some(p => p.id === 'default')) {
+        profiles.unshift({ id: 'default', name: 'Default Profile', createdAt: 0, isDefault: true });
+        saveProfilesList(profiles);
+      }
+      return profiles;
     }
 
     function saveProfilesList(list) {
       try {
+        // Enforce presence of default profile
+        if (!list.some(p => p.id === 'default')) {
+          list.unshift({ id: 'default', name: 'Default Profile', createdAt: 0, isDefault: true });
+        }
         localStorage.setItem(PROFILES_STORAGE_KEY, JSON.stringify(list));
       } catch (e) {}
     }
@@ -300,7 +273,7 @@
         const item = document.createElement('button');
         item.type = 'button';
         item.className = 'dropdown-item' + (p.id === activeId ? ' selected' : '');
-        item.innerHTML = `<span>${p.id === activeId ? '✓ ' : ''}${p.name}</span>`;
+        item.innerHTML = `<span>${p.id === activeId ? '✓ ' : ''}${p.name} ${p.id === 'default' ? '(Default)' : ''}</span>`;
         item.addEventListener('click', (e) => {
           e.stopPropagation();
           document.getElementById('profileMenu').classList.remove('open');
@@ -310,6 +283,20 @@
         });
         listEl.appendChild(item);
       });
+
+      // Disable delete button if Default profile is active
+      const delBtn = document.getElementById('deleteProfileBtn');
+      if (delBtn) {
+        if (activeId === 'default') {
+          delBtn.style.opacity = '0.4';
+          delBtn.style.cursor = 'not-allowed';
+          delBtn.title = 'Default profile cannot be deleted';
+        } else {
+          delBtn.style.opacity = '1';
+          delBtn.style.cursor = 'pointer';
+          delBtn.title = 'Delete active profile';
+        }
+      }
     }
 
     async function switchProfile(targetProfileId) {
@@ -332,6 +319,8 @@
         localStorage.setItem(getProfileDataKey('gacha_rolls', pid), gachaTotalRolls);
         localStorage.setItem(getProfileDataKey('gacha_pity', pid), gachaPityCounter);
         localStorage.setItem(getProfileDataKey('action_logs', pid), JSON.stringify(actionLogs));
+        localStorage.setItem(getProfileDataKey('market_cash', pid), marketCash.toFixed(2));
+        localStorage.setItem(getProfileDataKey('market_buy_lots', pid), JSON.stringify(marketBuyLots));
       } catch (e) {}
     }
 
@@ -385,7 +374,7 @@
         });
         dropzone.style.display = 'none';
         gallerySubBar.style.display = 'flex';
-        await processIncomingItems(savedPosts);
+        await processIncomingItems(savedPosts, false);
       } else {
         dropzone.style.display = 'block';
         gallerySubBar.style.display = 'none';
@@ -398,6 +387,7 @@
 
       renderGachaResults();
       if (gachaSubTabCompendium.classList.contains('active')) renderCompendium();
+      loadMarketDataFromStorage(pid);
     }
 
     async function createNewProfile() {
@@ -415,12 +405,17 @@
     }
 
     async function renameCurrentProfile() {
+      const activeId = getActiveProfileId();
+      if (activeId === 'default') {
+        await showCustomAlert('The default profile cannot be renamed.', 'Rename Profile', 'warn');
+        return;
+      }
+
       const currentName = getProfileCurrentName();
       const newName = await showCustomPrompt('Rename active profile:', currentName, 'Rename Profile');
       if (!newName || !newName.trim() || newName.trim() === currentName) return;
 
       const clean = newName.trim();
-      const activeId = getActiveProfileId();
       const list = getStoredProfiles();
       const p = list.find(x => x.id === activeId);
       if (p) {
@@ -448,6 +443,9 @@
       localStorage.removeItem(getProfileDataKey('gacha_rolls', pid));
       localStorage.removeItem(getProfileDataKey('gacha_pity', pid));
       localStorage.removeItem(getProfileDataKey('action_logs', pid));
+      localStorage.removeItem(getProfileDataKey('market_cash', pid));
+      localStorage.removeItem(getProfileDataKey('market_buy_lots', pid));
+      localStorage.removeItem(getProfileDataKey('last_daily_claim', pid));
 
       allImportedPosts.clear();
       currentItems = [];
@@ -459,6 +457,9 @@
       selectedItemsSet.clear();
       selectedGachaSet.clear();
       actionLogs = [];
+      marketCash = 1000;
+      marketBuyLots = [];
+      localStorage.setItem(getProfileDataKey('market_cash', pid), '1000.00');
 
       dropzone.style.display = 'block';
       gallerySubBar.style.display = 'none';
@@ -475,19 +476,21 @@
       renderColumns();
       renderGachaResults();
       renderActionLogs();
+      updateMarketUI();
+      checkAffordability();
 
       recordActionLog('profile', `Reset profile "${name}" to empty state`);
       showToast(`Profile "${name}" completely reset`, 'info', '🔄');
     }
 
     async function deleteCurrentProfile() {
-      const list = getStoredProfiles();
-      if (list.length <= 1) {
-        await showCustomAlert('You cannot delete the only existing profile. You can reset it instead.', 'Delete Profile', 'warn');
+      const activeId = getActiveProfileId();
+      if (activeId === 'default') {
+        await showCustomAlert('The default profile is permanent and cannot be deleted.', 'Delete Profile', 'warn');
         return;
       }
 
-      const activeId = getActiveProfileId();
+      const list = getStoredProfiles();
       const name = getProfileCurrentName();
       const ok = await showCustomConfirm(
         `Are you sure you want to delete profile <strong>"${name}"</strong> and all its stored artworks?`,
@@ -503,10 +506,13 @@
       localStorage.removeItem(getProfileDataKey('gacha_rolls', pid));
       localStorage.removeItem(getProfileDataKey('gacha_pity', pid));
       localStorage.removeItem(getProfileDataKey('action_logs', pid));
+      localStorage.removeItem(getProfileDataKey('market_cash', pid));
+      localStorage.removeItem(getProfileDataKey('market_buy_lots', pid));
+      localStorage.removeItem(getProfileDataKey('last_daily_claim', pid));
 
       const updatedList = list.filter(p => p.id !== activeId);
       saveProfilesList(updatedList);
-      const nextProfileId = updatedList[0].id;
+      const nextProfileId = 'default';
       setActiveProfileId(nextProfileId);
       updateProfileUI();
       await loadProfileData(nextProfileId);
@@ -515,6 +521,9 @@
       showToast(`Deleted profile "${name}"`, 'info', '🗑️');
     }
 
+    // ===================================================
+    // PROFILE EXPORT & FILE INPUT SETUP
+    // ===================================================
     async function exportCurrentProfile() {
       await persistActiveProfileData();
       const pid = getActiveProfileId();
@@ -536,6 +545,10 @@
           unlockedIds: Array.from(unlockedGachaSet),
           totalRolls: gachaTotalRolls,
           pityCounter: gachaPityCounter
+        },
+        market: {
+          cash: marketCash,
+          buyLots: marketBuyLots
         },
         actionLogs: actionLogs
       };
@@ -592,6 +605,9 @@
             const incomingCols = data.collections || {};
             const incomingGacha = data.gacha || {};
             const incomingLogs = data.actionLogs || [];
+            const incomingMarket = data.market || {};
+            const marketCashVal = (typeof incomingMarket.cash === 'number') ? incomingMarket.cash : 1000;
+            const marketLotsVal = Array.isArray(incomingMarket.buyLots) ? incomingMarket.buyLots : [];
 
             localStorage.setItem(getProfileDataKey('posts', targetId), JSON.stringify(incomingPosts));
             localStorage.setItem(getProfileDataKey('custom_collections', targetId), JSON.stringify(incomingCols));
@@ -600,6 +616,8 @@
             localStorage.setItem(getProfileDataKey('gacha_rolls', targetId), incomingGacha.totalRolls || 0);
             localStorage.setItem(getProfileDataKey('gacha_pity', targetId), incomingGacha.pityCounter || 0);
             localStorage.setItem(getProfileDataKey('action_logs', targetId), JSON.stringify(incomingLogs));
+            localStorage.setItem(getProfileDataKey('market_cash', targetId), Number(marketCashVal).toFixed(2));
+            localStorage.setItem(getProfileDataKey('market_buy_lots', targetId), JSON.stringify(marketLotsVal));
 
             updateProfileUI();
             await loadProfileData(targetId);
@@ -707,7 +725,6 @@
     const customDialogTitle = document.getElementById('customDialogTitle');
     const customDialogMessage = document.getElementById('customDialogMessage');
     const customDialogInput = document.getElementById('customDialogInput');
-    const customDialogSelect = document.getElementById('customDialogSelect');
     const customDialogSelectWrapper = document.getElementById('customDialogSelectWrapper');
     const customDialogSelectTrigger = document.getElementById('customDialogSelectTrigger');
     const customDialogSelectLabel = document.getElementById('customDialogSelectLabel');
@@ -866,7 +883,6 @@
           populateSelectMenu(selectOptions);
         } else {
           customDialogSelectWrapper.style.display = 'none';
-          customDialogSelect.style.display = 'none';
         }
 
         customDialogCancelBtn.style.display = (mode === 'alert') ? 'none' : 'inline-flex';
@@ -1265,6 +1281,19 @@
     }
 
     // ===================================================
+    // CARD VARIANT GENERATOR ENGINE
+    // ===================================================
+    const CARD_VARIANTS = {
+      standard: { id: 'standard', name: '', badge: '' },
+      rainbow:  { id: 'rainbow',  name: 'Shiny', badge: '✨' }
+    };
+
+    function rollCardVariant() {
+      // 5% drop rate for Shiny edition (adjustable)
+      return Math.random() * 100 < 5.0 ? 'rainbow' : 'standard';
+    }
+
+    // ===================================================
     // APPLICATION STATE
     // ===================================================
     let currentItems = [];
@@ -1315,6 +1344,7 @@
     // Gacha custom columns & layout state
     let gachaColCount = parseInt(localStorage.getItem('gacha_col_count') || '5');
     let isGachaMasonry = localStorage.getItem('gacha_layout_masonry') === 'true';
+    let isCompendiumMasonry = localStorage.getItem('compendium_layout_masonry') === 'true';
 
     let galleryColCount = parseInt(localStorage.getItem('gallery_col_count') || '4');
     let renderedCount = 0;
@@ -1440,6 +1470,8 @@
     const gachaColCountLabel = document.getElementById('gachaColCountLabel');
     const gachaGridToggleOpt = document.getElementById('gachaGridToggleOpt');
     const gachaMasonryToggleOpt = document.getElementById('gachaMasonryToggleOpt');
+    const compGridToggleOpt = document.getElementById('compGridToggleOpt');
+    const compMasonryToggleOpt = document.getElementById('compMasonryToggleOpt');
     const gachaMultiSelectToggleBtn = document.getElementById('gachaMultiSelectToggleBtn');
 
     const bannerPoolCountAll = document.getElementById('bannerPoolCountAll');
@@ -1485,20 +1517,8 @@
     const pokemonPrevBtn = document.getElementById('pokemonPrevBtn');
     const pokemonNextBtn = document.getElementById('pokemonNextBtn');
 
-    const focusBlurOverlay = document.getElementById('focusBlurOverlay');
-    const focusBlurImg = document.getElementById('focusBlurImg');
-    const focusBlurCloseBtn = document.getElementById('focusBlurCloseBtn');
-
-    const importLoadingOverlay = document.getElementById('importLoadingOverlay');
-    const loadingTitle = document.getElementById('loadingTitle');
-    const loadingSubtext = document.getElementById('loadingSubtext');
-    const importProgressBar = document.getElementById('importProgressBar');
-    const loadingStats = document.getElementById('loadingStats');
-    const skipLoadingBtn = document.getElementById('skipLoadingBtn');
-
     const badgeVisibilityBtn = document.getElementById('badgeVisibilityBtn');
     const badgeVisibilityMenu = document.getElementById('badgeVisibilityMenu');
-    const chkShowRarity = document.getElementById('chkShowRarity');
     const chkShowPage = document.getElementById('chkShowPage');
     const chkShowPlatform = document.getElementById('chkShowPlatform');
     const chkShowColor = document.getElementById('chkShowColor');
@@ -1541,7 +1561,7 @@
     const closeActionLogsBtn = document.getElementById('closeActionLogsBtn');
     const clearActionLogsBtn = document.getElementById('clearActionLogsBtn');
 
-    // LIGHTBOX REFERENCES & ARROW CONTROLS & DIMENSION BADGE
+    // LIGHTBOX REFERENCES & CLEAN ARROWLESS MODAL SETUP
     const modal = document.getElementById('modal');
     const modalMedia = document.getElementById('modalMedia');
     const modalImg = document.getElementById('modalImg');
@@ -1556,8 +1576,6 @@
     const modalDimText = document.getElementById('modalDimText');
     const modalAddToColBtn = document.getElementById('modalAddToColBtn');
     const modalDeleteBtn = document.getElementById('modalDeleteBtn');
-    const modalPrevBtn = document.getElementById('modalPrevBtn');
-    const modalNextBtn = document.getElementById('modalNextBtn');
 
     const userNotesModal = document.getElementById('userNotesModal');
     const openUserMetaModalBtn = document.getElementById('openUserMetaModalBtn');
@@ -1582,8 +1600,8 @@
     function getGachaScreenColLimits() {
       const w = window.innerWidth;
       const isPortrait = window.matchMedia('(orientation: portrait)').matches || window.innerHeight > w;
-      if (w < 480) return { min: 1, max: isPortrait ? 2 : 3 };
-      if (w < 768) return { min: 1, max: isPortrait ? 2 : 4 };
+      if (w < 480) return { min: 1, max: 3};
+      if (w < 768) return { min: 1, max: isPortrait ? 3 : 4 };
       if (w < 1024) return { min: 2, max: isPortrait ? 4 : 5 };
       if (w < 1400) return { min: 2, max: 6 };
       return { min: 2, max: 8 };
@@ -1653,6 +1671,45 @@
         renderGachaResults();
       });
 
+      // COMPENDIUM GRID / MASONRY TOGGLE
+      function getCompendiumColCount() {
+        const w = window.innerWidth;
+        if (w <= 640) return 3;
+        if (w <= 1024) return 5;
+        return 7;
+      }
+
+      function updateCompLayoutToggleButtons() {
+        if (!compGridToggleOpt || !compMasonryToggleOpt) return;
+        if (isCompendiumMasonry) {
+          compMasonryToggleOpt.classList.add('active');
+          compGridToggleOpt.classList.remove('active');
+        } else {
+          compGridToggleOpt.classList.add('active');
+          compMasonryToggleOpt.classList.remove('active');
+        }
+      }
+
+      if (compGridToggleOpt && compMasonryToggleOpt) {
+        updateCompLayoutToggleButtons();
+
+        compGridToggleOpt.addEventListener('click', () => {
+          if (!isCompendiumMasonry) return;
+          isCompendiumMasonry = false;
+          localStorage.setItem('compendium_layout_masonry', 'false');
+          updateCompLayoutToggleButtons();
+          renderCompendium();
+        });
+
+        compMasonryToggleOpt.addEventListener('click', () => {
+          if (isCompendiumMasonry) return;
+          isCompendiumMasonry = true;
+          localStorage.setItem('compendium_layout_masonry', 'true');
+          updateCompLayoutToggleButtons();
+          renderCompendium();
+        });
+      }
+
       gachaMasonryToggleOpt.addEventListener('click', () => {
         if (isGachaMasonry) return;
         isGachaMasonry = true;
@@ -1704,9 +1761,10 @@
         el.classList.toggle('card-selected-highlight', isSel);
       });
 
-      if (gachaView.style.display !== 'none' && isGachaSelectionMode) {
+      if (gachaView.style.display !== 'none') {
         batchSelectedCount.textContent = selectedGachaSet.size;
-        batchActionBar.classList.toggle('visible', selectedGachaSet.size > 0);
+        // Toggles visibility immediately based on selection mode state
+        batchActionBar.classList.toggle('visible', isGachaSelectionMode);
         batchAddToColBtn.style.display = 'none';
         batchRemoveFromColBtn.style.display = 'none';
         batchTagBtn.style.display = 'none';
@@ -1733,7 +1791,7 @@
       });
 
       // Recalculate unlocked catalog IDs
-      unlockedGachaSet = new Set(gachaSummonHistory.map(i => i.postId || i.id));
+      unlockedGachaSet = new Set(gachaSummonHistory.map(i => i.id || i.postId));
 
       selectedGachaSet.clear();
       saveGachaStateToStorage(false);
@@ -1744,25 +1802,7 @@
       showToast(`Removed ${count} cards from inventory`, 'info', '🎰');
     }
 
-    // FOCUS BLUR QUICK ZOOM OVERLAY LOGIC
-    function openFocusBlurView(imageUrl) {
-      if (!imageUrl) return;
-      focusBlurImg.src = imageUrl;
-      focusBlurOverlay.classList.add('open');
-      document.body.style.overflow = 'hidden';
-    }
-
-    function closeFocusBlurView() {
-      focusBlurOverlay.classList.remove('open');
-      focusBlurImg.src = '';
-      if (!modal.classList.contains('open') && !pokemonModal.classList.contains('open') && !gachaSummonOverlay.classList.contains('active')) {
-        document.body.style.overflow = '';
-      }
-    }
-
-    focusBlurOverlay.addEventListener('click', closeFocusBlurView);
-    focusBlurCloseBtn.addEventListener('click', closeFocusBlurView);
-
+    // PROFILE MENU CONTROLS
     profileMenuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       const isOpen = profileMenu.classList.contains('open');
@@ -1799,7 +1839,9 @@
       document.getElementById('profileFileInput').click();
     });
 
-    // Themes & Secret Codes
+    // ===================================================
+    // THEMES & SECRET CODES
+    // ===================================================
     const themeToggleBtn = document.getElementById('themeToggle');
     const secretCodeMenu = document.getElementById('secretCodeMenu');
     const secretCodeInput = document.getElementById('secretCodeInput');
@@ -1960,13 +2002,18 @@
 
     secretCodeMenu.addEventListener('click', (e) => e.stopPropagation());
 
-    // Navigation & Tab Switching
+    // ===================================================
+    // NAVIGATION & TAB SWITCHING
+    // ===================================================
     function activateTab(tabBtn, viewEl) {
       if (isSelectionMode) setSelectionMode(false);
       if (isGachaSelectionMode) setGachaSelectionMode(false);
 
-      [tabGallery, tabCollections, tabGacha].forEach(t => t.classList.remove('active'));
-      [galleryView, collectionsView, gachaView].forEach(v => v.style.display = 'none');
+      const allTabs = [tabGallery, tabCollections, tabGacha, document.getElementById('tabMarket')];
+      const allViews = [galleryView, collectionsView, gachaView, document.getElementById('marketView')];
+
+      allTabs.forEach(t => { if (t) t.classList.remove('active'); });
+      allViews.forEach(v => { if (v) v.style.display = 'none'; });
 
       tabBtn.classList.add('active');
       viewEl.style.display = 'block';
@@ -2009,7 +2056,6 @@
       } else {
         renderGachaResults();
       }
-      preloadAllCardImages(currentItems);
     });
 
     actionLogsMenuBtn.addEventListener('click', () => {
@@ -2053,7 +2099,6 @@
     const showPlatform = localStorage.getItem('gallery_show_platform') !== 'false';
     const showColor = localStorage.getItem('gallery_show_color') !== 'false';
 
-    chkShowRarity.checked = showRarity;
     chkShowPage.checked = showPage;
     chkShowPlatform.checked = showPlatform;
     chkShowColor.checked = showColor;
@@ -2063,10 +2108,6 @@
     document.body.classList.toggle('hide-platform-badge', !showPlatform);
     document.body.classList.toggle('hide-color-badge', !showColor);
 
-    chkShowRarity.addEventListener('change', (e) => {
-      document.body.classList.toggle('hide-rarity-badge', !e.target.checked);
-      localStorage.setItem('gallery_show_rarity', e.target.checked);
-    });
     chkShowPage.addEventListener('change', (e) => {
       document.body.classList.toggle('hide-page-badge', !e.target.checked);
       localStorage.setItem('gallery_show_page', e.target.checked);
@@ -2099,13 +2140,12 @@
     });
 
     badgeVisibilityMenu.addEventListener('click', (e) => e.stopPropagation());
-    skipLoadingBtn.addEventListener('click', () => importLoadingOverlay.classList.remove('active'));
 
     function getScreenColLimits() {
       const w = window.innerWidth;
       const isPortrait = window.matchMedia('(orientation: portrait)').matches || window.innerHeight > w;
-      if (w < 480) return { min: 1, max: isPortrait ? 2 : 3 };
-      if (w < 768) return { min: 1, max: isPortrait ? 2 : 4 };
+      if (w < 480) return { min: 1, max: 3};
+      if (w < 768) return { min: 1, max: isPortrait ? 3 : 4 };
       if (w < 1024) return { min: 2, max: isPortrait ? 4 : 5 };
       if (w < 1400) return { min: 2, max: 6 };
       return { min: 2, max: 8 };
@@ -2147,6 +2187,33 @@
         onZoomChange();
       }
     });
+    
+    // ===================================================
+    // TOP BAR CONTROLS WHEEL SCROLL HANDLERS
+    // ===================================================
+    const topBarControls = document.getElementById('topBarControlsGroup');
+    if (topBarControls) {
+      topBarControls.addEventListener('wheel', (e) => {
+        // Convert vertical mouse wheel scrolling into horizontal scroll
+        if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+          e.preventDefault();
+          topBarControls.scrollLeft += e.deltaY;
+        }
+      }, { passive: false });
+    }
+
+    const gachaZoomWrap = document.getElementById('gachaZoomWrap');
+    if (gachaZoomWrap) {
+      gachaZoomWrap.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.deltaY < 0) {
+          document.getElementById('gachaZoomPlus')?.click();
+        } else if (e.deltaY > 0) {
+          document.getElementById('gachaZoomMinus')?.click();
+        }
+      }, { passive: false });
+    }
 
     storageMenuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2172,11 +2239,15 @@
     loadFilesBtn.addEventListener('click', () => fileInput.click());
     window.addEventListener('click', () => closeAllDropdowns());
 
-    // Atmosphere Particles
+    // ===================================================
+    // STABILIZED ATMOSPHERE PARTICLES ENGINE
+    // (FIX: STACKED ANIMATION LOOPS & VELOCITY EXPLOSION ELIMINATED)
+    // ===================================================
     let atmosphereParticles = [];
     let atmosphereAnimId = null;
     let targetAtmosphereCanvas = null;
     let atmCtx = null;
+    let activeAtmosphereTier = null;
 
     function resizeAtmosphereCanvas() {
       const w = window.innerWidth;
@@ -2211,39 +2282,43 @@
         const themeRarityColor = getComputedRarityColor(this.tier);
 
         if (this.tier === 'ssr') {
-          this.vx = (Math.random() - 0.5) * 1.8;
-          this.vy = -(Math.random() * 1.8 + 1.0);
-          this.size = Math.random() * 3.8 + 1.8;
+          this.vx = (Math.random() - 0.5) * 1.5;
+          this.vy = -(Math.random() * 1.6 + 0.8);
+          this.size = Math.random() * 3.5 + 1.5;
           this.color = Math.random() > 0.25 ? themeRarityColor : '#FFFFFF';
-          this.glow = 15;
+          this.glow = 12;
         } else if (this.tier === 'sr') {
-          this.vx = Math.sin(Math.random() * Math.PI * 2) * 1.2;
-          this.vy = -(Math.random() * 1.2 + 0.5);
-          this.size = Math.random() * 3.5 + 1.2;
+          this.vx = (Math.random() - 0.5) * 1.1;
+          this.vy = -(Math.random() * 1.1 + 0.5);
+          this.size = Math.random() * 3.0 + 1.2;
           this.color = Math.random() > 0.35 ? themeRarityColor : '#FFFFFF';
-          this.glow = 10;
+          this.glow = 9;
         } else if (this.tier === 'r') {
-          this.vx = (Math.random() - 0.5) * 1.0;
-          this.vy = -(Math.random() * 1.0 + 0.4);
-          this.size = Math.random() * 2.8 + 1.0;
+          this.vx = (Math.random() - 0.5) * 0.9;
+          this.vy = -(Math.random() * 0.9 + 0.4);
+          this.size = Math.random() * 2.5 + 1.0;
           this.color = Math.random() > 0.3 ? themeRarityColor : '#FFFFFF';
-          this.glow = 8;
+          this.glow = 6;
         } else {
-          this.vx = (Math.random() - 0.5) * 0.6;
+          this.vx = (Math.random() - 0.5) * 0.5;
           this.vy = -(Math.random() * 0.5 + 0.2);
-          this.size = Math.random() * 2.2 + 0.8;
+          this.size = Math.random() * 2.0 + 0.8;
           this.color = themeRarityColor;
           this.glow = 4;
         }
       }
 
       update() {
+        // Enforce strict terminal velocity limits
+        this.vx = Math.max(-2.5, Math.min(2.5, this.vx));
+        this.vy = Math.max(-3.0, Math.min(0, this.vy));
+
         this.x += this.vx;
         this.y += this.vy;
-        this.sparklePhase += (this.tier === 'ssr' ? 0.08 : 0.05);
+        this.sparklePhase += (this.tier === 'ssr' ? 0.07 : 0.04);
 
         if (this.tier === 'ssr' || this.tier === 'sr') {
-          this.alpha = 0.35 + Math.abs(Math.sin(this.sparklePhase)) * 0.55;
+          this.alpha = 0.35 + Math.abs(Math.sin(this.sparklePhase)) * 0.5;
         }
 
         const h = this.canvas ? this.canvas.height : window.innerHeight;
@@ -2268,13 +2343,26 @@
     }
 
     function initAtmosphereParticles(tier, canvasEl = pokemonAtmosphereCanvas) {
+      // FIX: Check if already animating with the exact same tier and canvas.
+      // If so, do NOT recreate particles or stack requestAnimationFrame loops!
+      if (atmosphereAnimId && targetAtmosphereCanvas === canvasEl && activeAtmosphereTier === tier) {
+        return;
+      }
+
+      // Strictly stop existing loop prior to re-initializing
+      if (atmosphereAnimId) {
+        cancelAnimationFrame(atmosphereAnimId);
+        atmosphereAnimId = null;
+      }
+
       resizeAtmosphereCanvas();
       targetAtmosphereCanvas = canvasEl;
+      activeAtmosphereTier = tier;
       if (!targetAtmosphereCanvas) return;
       atmCtx = targetAtmosphereCanvas.getContext('2d');
       atmosphereParticles = [];
 
-      const count = (tier === 'ssr') ? 75 : (tier === 'sr' ? 50 : (tier === 'r' ? 35 : 20));
+      const count = (tier === 'ssr') ? 60 : (tier === 'sr' ? 40 : (tier === 'r' ? 28 : 16));
       for (let i = 0; i < count; i++) {
         atmosphereParticles.push(new AtmosphereParticle(tier, targetAtmosphereCanvas));
       }
@@ -2286,6 +2374,7 @@
         cancelAnimationFrame(atmosphereAnimId);
         atmosphereAnimId = null;
       }
+      activeAtmosphereTier = null;
       atmosphereParticles = [];
       if (canvasEl) {
         const ctx = canvasEl.getContext('2d');
@@ -2311,15 +2400,17 @@
       atmosphereAnimId = requestAnimationFrame(loopAtmosphereParticles);
     }
 
+    // ===================================================
     // MULTI-SELECT ENGINE & BATCH ACTIONS
+    // ===================================================
     function setSelectionMode(active) {
       isSelectionMode = active;
       document.body.classList.toggle('selection-mode-active', isSelectionMode);
       multiSelectToggleBtn.style.color = isSelectionMode ? 'var(--accent)' : 'var(--subtext)';
       multiSelectToggleBtn.style.borderColor = isSelectionMode ? 'var(--accent)' : 'var(--border)';
       if (!isSelectionMode) deselectAll();
+      updateSelectionVisuals(); // <-- Add this call
     }
-
     multiSelectToggleBtn.addEventListener('click', () => {
       setSelectionMode(!isSelectionMode);
     });
@@ -2344,8 +2435,19 @@
 
       if (gachaView.style.display === 'none') {
         batchSelectedCount.textContent = selectedItemsSet.size;
-        batchActionBar.classList.toggle('visible', selectedItemsSet.size > 0);
+        // Show immediately when selection mode is active
+        batchActionBar.classList.toggle('visible', isSelectionMode);
         batchDeleteBtn.textContent = '🗑️ Delete';
+
+        if (tabCollections && tabCollections.classList.contains('active')) {
+          batchRemoveFromColBtn.style.display = 'inline-flex';
+          batchAddToColBtn.style.display = 'none';
+        } else {
+          batchRemoveFromColBtn.style.display = 'none';
+          batchAddToColBtn.style.display = 'inline-flex';
+        }
+        batchTagBtn.style.display = 'inline-flex';
+        batchExportBtn.style.display = 'inline-flex';
       }
     }
 
@@ -2356,8 +2458,11 @@
       updateGachaSelectionVisuals();
     }
 
-    batchCancelBtn.addEventListener('click', deselectAll);
-
+    batchCancelBtn.addEventListener('click', () => {
+      if (isSelectionMode) setSelectionMode(false);
+      if (isGachaSelectionMode) setGachaSelectionMode(false);
+    });
+    
     batchDeleteBtn.addEventListener('click', async () => {
       if (gachaView.style.display !== 'none' && isGachaSelectionMode) {
         await removeSelectedGachaCards();
@@ -2430,13 +2535,36 @@
       };
 
       let options = buildOptions();
+
+      // If no collections exist, ask the user to create one first
       if (!options.length) {
-        const defId = 'col_' + Date.now();
-        customCollections[defId] = { id: defId, name: 'Favorites', desc: '', itemIds: [] };
+        const name = await showCustomPrompt(
+          'No collections found. Enter a name to create your first collection:',
+          '',
+          'Create Collection'
+        );
+        // If canceled or empty, exit immediately without saving anything
+        if (!name || !name.trim()) return;
+
+        const newId = 'col_' + Date.now();
+        customCollections[newId] = { id: newId, name: name.trim(), desc: '', itemIds: [] };
         saveCollections();
-        options = buildOptions();
+        recordActionLog('collection', `Created collection "${name.trim()}"`);
+        showToast(`Created collection "${name.trim()}"`, 'success', '📁');
+
+        // Add selected items directly to the newly created collection
+        itemIdsToAdd.forEach(id => {
+          if (!customCollections[newId].itemIds.includes(id)) {
+            customCollections[newId].itemIds.push(id);
+          }
+        });
+        saveCollections();
+        recordActionLog('collection', `Added ${itemIdsToAdd.length} items to collection "${name.trim()}"`);
+        showToast(`Added ${itemIdsToAdd.length} artwork(s) to "${name.trim()}"`, 'success', '📁');
+        return;
       }
 
+      // If collections exist, present the selection dialog
       const pickedId = await showCustomSelectPrompt(
         'Select target collection to add artwork(s):',
         options,
@@ -2684,54 +2812,55 @@
       collectionsFileInput.click();
     });
 
-    collectionsFileInput.addEventListener('change', (e) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
+    async function ensureCardImageReady(card) {
+      if (!card) return '';
+      if (!card._hdResolved && (card.platform === 'rule34' || card.platform === 'safebooru')) {
+        await resolvePostHdQuality(card);
+      }
+      if (!card.imgUrl) return '';
 
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        try {
-          const data = JSON.parse(event.target.result);
-          const incoming = data.collections || (typeof data === 'object' && !Array.isArray(data) ? data : null);
+      if (blobUrlMap.has(card.imgUrl)) return blobUrlMap.get(card.imgUrl);
+      if (preloadedImageCache.has(card.imgUrl)) return preloadedImageCache.get(card.imgUrl);
 
-          if (!incoming || typeof incoming !== 'object') {
-            throw new Error('Invalid collection format');
-          }
-
-          let added = 0;
-          let merged = 0;
-
-          Object.values(incoming).forEach(col => {
-            if (!col || !col.name) return;
-            const existingId = Object.keys(customCollections).find(k => customCollections[k].name === col.name);
-
-            if (existingId) {
-              const existingSet = new Set(customCollections[existingId].itemIds || []);
-              (col.itemIds || []).forEach(id => existingSet.add(id));
-              customCollections[existingId].itemIds = Array.from(existingSet);
-              merged++;
-            } else {
-              const newId = col.id || ('col_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6));
-              customCollections[newId] = {
-                id: newId,
-                name: col.name,
-                desc: col.desc || '',
-                itemIds: Array.isArray(col.itemIds) ? [...col.itemIds] : []
-              };
-              added++;
-            }
-          });
-
-          saveCollections();
-          recordActionLog('import', `Imported collections: ${added} new, ${merged} merged`);
-          await showCustomAlert(`Collections imported successfully!<br>New: ${added}<br>Merged: ${merged}`, 'Import Collections', 'success');
-        } catch (err) {
-          showCustomAlert('Failed to parse collections JSON: ' + err.message, 'Import Error', 'error');
+      try {
+        const cached = await getCachedBlob(card.imgUrl);
+        if (cached) {
+          const objUrl = URL.createObjectURL(cached);
+          blobUrlMap.set(card.imgUrl, objUrl);
+          preloadedImageCache.set(card.imgUrl, objUrl);
+          return objUrl;
         }
-        collectionsFileInput.value = '';
-      };
-      reader.readAsText(file);
-    });
+      } catch (e) {}
+
+      return new Promise((resolve) => {
+        let resolved = false;
+        const finish = (url) => {
+          if (resolved) return;
+          resolved = true;
+          resolve(url);
+        };
+
+        const timer = setTimeout(() => finish(card.fallbackUrl || card.imgUrl), 3500);
+        const offscreenImg = new Image();
+        if (card.platform === 'twitter') offscreenImg.crossOrigin = 'anonymous';
+        offscreenImg.decoding = 'async';
+        offscreenImg.referrerPolicy = 'no-referrer';
+
+        offscreenImg.onload = async () => {
+          try { if ('decode' in offscreenImg) await offscreenImg.decode(); } catch (_) {}
+          clearTimeout(timer);
+          preloadedImageCache.set(card.imgUrl, offscreenImg.src);
+          finish(offscreenImg.src);
+        };
+
+        offscreenImg.onerror = () => {
+          clearTimeout(timer);
+          finish(card.fallbackUrl || card.imgUrl);
+        };
+
+        offscreenImg.src = card.imgUrl;
+      });
+    }
 
     // ===================================================
     // USER TAGS MANAGEMENT
@@ -3179,7 +3308,7 @@
     setupModalTagPicker();
 
     // ===================================================
-    // DROPDOWN SYNC ENGINE
+    // DROPDOWN SYNC & LOADED STATUS COUNTER ENGINE
     // ===================================================
     function syncCustomDropdown(selectId) {
       const select = document.getElementById(selectId);
@@ -3245,16 +3374,34 @@
       syncCustomDropdown('gachaRarityFilterSelect');
     }
 
+    // PERSISTENT MEMORY PRELOAD STATE & PROGRESS VISIBILITY
+    let hasCompletedInitialImport = false;
+    let isImportInProgress = false;
+
     function updateLoadedCounter() {
-      if (totalTargetImages === 0) {
-        loadedCountBadge.textContent = '0 items';
-        loadedCountBadge.style.borderColor = 'var(--border)';
-      } else if (fullyLoadedImages >= totalTargetImages) {
-        loadedCountBadge.textContent = `🖼️ ${totalTargetImages} items`;
-        loadedCountBadge.style.borderColor = '#3fb950';
-      } else {
-        loadedCountBadge.textContent = `🖼️ ${fullyLoadedImages}/${totalTargetImages} loaded`;
-        loadedCountBadge.style.borderColor = 'var(--accent)';
+      if (!loadedCountBadge) return;
+
+      if (!isImportInProgress && hasCompletedInitialImport) {
+        loadedCountBadge.style.display = 'none';
+      } else if (isImportInProgress) {
+        loadedCountBadge.style.display = 'inline-block';
+        if (totalTargetImages === 0) {
+          loadedCountBadge.textContent = '0 items';
+          loadedCountBadge.style.borderColor = 'var(--border)';
+        } else if (fullyLoadedImages >= totalTargetImages) {
+          loadedCountBadge.textContent = `🖼️ ${totalTargetImages}/${totalTargetImages} loaded`;
+          loadedCountBadge.style.borderColor = '#3fb950';
+          setTimeout(() => {
+            if (fullyLoadedImages >= totalTargetImages) {
+              isImportInProgress = false;
+              hasCompletedInitialImport = true;
+              loadedCountBadge.style.display = 'none';
+            }
+          }, 800);
+        } else {
+          loadedCountBadge.textContent = `🖼️ ${fullyLoadedImages}/${totalTargetImages} loaded`;
+          loadedCountBadge.style.borderColor = 'var(--accent)';
+        }
       }
 
       if (currentItems.length > 0) {
@@ -3264,9 +3411,16 @@
       }
     }
 
-    function resetLoadedCounter(targetCount) {
+    function resetLoadedCounter(targetCount, isNewImport = false) {
+      if (!isNewImport) {
+        updateLoadedCounter();
+        return;
+      }
+      isImportInProgress = true;
+      hasCompletedInitialImport = false;
       fullyLoadedImages = 0;
       totalTargetImages = targetCount;
+      if (loadedCountBadge) loadedCountBadge.style.display = 'inline-block';
       updateLoadedCounter();
     }
 
@@ -3526,7 +3680,7 @@
       const candidateItems = getActiveBannerItems();
 
       candidateItems.forEach(item => {
-        const seed = String(item.postId || item.id || item.imgUrl);
+        const seed = String(item.id || item.postId || item.imgUrl);
         const rarityMeta = getDeterministicRarity(seed);
         item.gachaRarity = rarityMeta.tier;
 
@@ -3582,7 +3736,7 @@
       if (!pool.length) pool = currentItems;
 
       const uncollected = pool.filter(item => {
-        const id = item.postId || item.id;
+        const id = item.id || item.postId;
         return !unlockedGachaSet.has(id) && !excludedPullIds.has(id);
       });
 
@@ -3590,15 +3744,17 @@
       if (uncollected.length > 0) {
         candidatePool = uncollected;
       } else {
-        const notInThisPull = pool.filter(item => !excludedPullIds.has(item.postId || item.id));
+        const notInThisPull = pool.filter(item => !excludedPullIds.has(item.id || item.postId));
         candidatePool = notInThisPull.length > 0 ? notInThisPull : pool;
       }
 
       const picked = candidatePool[Math.floor(Math.random() * candidatePool.length)];
+      const rolledVariant = rollCardVariant();
       return {
         ...picked,
         authorName: picked.platform === 'pinterest' ? 'Pinterest creator' : (picked.authorName || 'Unknown'),
         rarity: picked.gachaRarity || tier,
+        variant: rolledVariant,
         summonedAt: Date.now(),
         summonId: 'sum_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)
       };
@@ -3648,9 +3804,10 @@
         const res = rollSingleCard(isPitySR, currentBatchIds);
         if (res.rarity === 'SSR' || res.rarity === 'SR') gotSrOrBetter = true;
 
-        currentBatchIds.add(res.postId || res.id);
+        const cardId = res.id || res.postId;
+        currentBatchIds.add(cardId);
         summoned.push(res);
-        unlockedGachaSet.add(res.postId || res.id);
+        unlockedGachaSet.add(cardId);
       }
 
       preloadAllCardImages(summoned);
@@ -3675,7 +3832,7 @@
       compGridN.innerHTML = '';
 
       const pool = getActiveBannerItems();
-      const unlockedCount = pool.filter(i => unlockedGachaSet.has(i.postId || i.id)).length;
+      const unlockedCount = pool.filter(i => unlockedGachaSet.has(i.id || i.postId)).length;
       const pct = pool.length ? ((unlockedCount / pool.length) * 100).toFixed(1) : 0;
 
       compendiumStatsBar.innerHTML = `
@@ -3702,30 +3859,31 @@
         else if (r === 'C') tiers.N.pool.push(item);
       });
 
+      const numCols = getCompendiumColCount();
+
       Object.entries(tiers).forEach(([tier, data]) => {
         const total = data.pool.length;
-        const unlocked = data.pool.filter(i => unlockedGachaSet.has(i.postId || i.id)).length;
+        const unlocked = data.pool.filter(i => unlockedGachaSet.has(i.id || i.postId)).length;
         const tierPct = total ? Math.round((unlocked / total) * 100) : 0;
         const displayTier = getRarityBadgeText(tier);
         data.label.textContent = `${unlocked} / ${total} (${tierPct}%)`;
 
         if (!total) {
+          data.grid.classList.remove('masonry-mode');
           data.grid.innerHTML = `<div style="grid-column: 1/-1; font-size: 0.8rem; color: var(--subtext); padding: 1rem 0;">No ${displayTier} artworks in this banner pool.</div>`;
           return;
         }
 
-        data.pool.forEach(item => {
-          const isUnlocked = unlockedGachaSet.has(item.postId || item.id);
+        const createCompCard = (item) => {
+          const isUnlocked = unlockedGachaSet.has(item.id || item.postId);
           const card = document.createElement('div');
           const tierLower = getRarityClass(tier);
           card.className = `gacha-card rarity-${tierLower} compendium-card ${isUnlocked ? '' : 'locked'}`;
 
-          const author = item.platform === 'pinterest' ? 'Pinterest creator' : (item.authorName || 'Unknown');
-
           card.innerHTML = `
             <div class="gacha-card-badge ${tierLower}">${isUnlocked ? displayTier : '???'}</div>
             <div class="gacha-card-thumb">
-              <img alt="Compendium Art" loading="lazy" decoding="async">
+              <img alt="Compendium Art" loading="eager" decoding="async">
             </div>
           `;
 
@@ -3733,10 +3891,29 @@
           setCachedOrRemoteSrc(img, item);
 
           if (isUnlocked) {
-            card.addEventListener('click', () => openPokemonCard(item, false));
+            card.addEventListener('click', () => openPokemonCard(item, 'compendium'));
           }
-          data.grid.appendChild(card);
-        });
+          return card;
+        };
+
+        if (isCompendiumMasonry) {
+          data.grid.classList.add('masonry-mode');
+          const colElements = [];
+          for (let i = 0; i < numCols; i++) {
+            const col = document.createElement('div');
+            col.className = 'gacha-masonry-col';
+            data.grid.appendChild(col);
+            colElements.push(col);
+          }
+          data.pool.forEach((item, idx) => {
+            colElements[idx % numCols].appendChild(createCompCard(item));
+          });
+        } else {
+          data.grid.classList.remove('masonry-mode');
+          data.pool.forEach(item => {
+            data.grid.appendChild(createCompCard(item));
+          });
+        }
       });
     }
 
@@ -3909,13 +4086,13 @@
       eagerPrefetchNextCards(0);
 
       const readyUrl = await ensureCardImageReady(cards[0]);
-      showInspectCard(0, readyUrl, true);
+      await showInspectCard(0, readyUrl, true);
     }
 
     let ssrRevealTimer = null;
     let ssrRevealTimer2 = null;
 
-    function showInspectCard(index, readyImgUrl = '', isInitialEntrance = false) {
+    async function showInspectCard(index, readyImgUrl = '', isInitialEntrance = false) {
       if (index >= pendingSummonPull.length) {
         finishInspectAndShowSummary();
         return;
@@ -3939,9 +4116,25 @@
         summonInspectNextBtn.style.visibility = index < pendingSummonPull.length - 1 ? 'visible' : 'hidden';
       }
 
+      const variantType = card.variant || 'standard';
+      const variantMeta = CARD_VARIANTS[variantType] || CARD_VARIANTS.standard;
+      
       summonInspectRarityPill.className = `pokemon-card-top-pill ${tierClass}`;
       summonInspectRarityPill.textContent = tierBadge;
-      summonInspectCardStage.className = `summon-inspect-card-stage rarity-${tierClass}`;
+      summonInspectCardStage.className = `summon-inspect-card-stage rarity-${tierClass} ${variantType !== 'standard' ? 'variant-' + variantType : ''}`;
+
+      let inspectVarBadge = summonInspectCardStage.querySelector('.card-variant-badge');
+      if (variantType !== 'standard') {
+        if (!inspectVarBadge) {
+          inspectVarBadge = document.createElement('div');
+          summonInspectCardStage.appendChild(inspectVarBadge);
+        }
+        inspectVarBadge.className = `card-variant-badge variant-badge-${variantType}`;
+        inspectVarBadge.textContent = variantMeta.badge;
+        inspectVarBadge.style.display = 'block';
+      } else if (inspectVarBadge) {
+        inspectVarBadge.style.display = 'none';
+      }
 
       const domColor = card.dominantColor || '#58a6ff';
       const rarityColor = getComputedRarityColor(rawTier);
@@ -3956,21 +4149,55 @@
       summonInspectRarityPill.style.setProperty('--border-mix-color', borderMix);
 
       summonInspectCardStage.style.transform = `perspective(1400px) rotateX(0deg) rotateY(0deg)`;
-      summonInspectCardStage.style.setProperty('--holo-angle', `135deg`);
-      summonInspectCardStage.style.setProperty('--holo-x', `50%`);
-      summonInspectCardStage.style.setProperty('--holo-y', `50%`);
+
       summonInspectCardStage.style.setProperty('--tilt-deg', `0deg`);
 
-      summonInspectRarityPill.style.setProperty('--holo-angle', `135deg`);
-      summonInspectRarityPill.style.setProperty('--holo-x', `50%`);
-      summonInspectRarityPill.style.setProperty('--holo-y', `50%`);
       summonInspectRarityPill.style.setProperty('--tilt-deg', `0deg`);
+
+      // 1. Keep stage hidden while switching out textures
+      summonInspectCardStage.style.opacity = '0';
+      summonInspectCardStage.style.transition = 'none';
+
+      if (!readyImgUrl) {
+        readyImgUrl = await ensureCardImageReady(card);
+      }
+
+      if (card.platform === 'twitter') {
+        summonInspectArt.crossOrigin = 'anonymous';
+      } else {
+        summonInspectArt.removeAttribute('crossorigin');
+      }
 
       if (readyImgUrl) {
         summonInspectArt.src = readyImgUrl;
       } else {
         setCachedOrRemoteSrc(summonInspectArt, card);
       }
+
+      // 2. Wait until summonInspectArt itself has loaded its pixels
+      if (!summonInspectArt.complete || summonInspectArt.naturalWidth === 0) {
+        await new Promise((resolve) => {
+          const onDone = () => {
+            summonInspectArt.removeEventListener('load', onDone);
+            summonInspectArt.removeEventListener('error', onDone);
+            resolve();
+          };
+          summonInspectArt.addEventListener('load', onDone, { once: true });
+          summonInspectArt.addEventListener('error', onDone, { once: true });
+          setTimeout(onDone, 3000);
+        });
+      }
+
+      // 3. Guarantee decoded bitmap is GPU-ready before triggering transition
+      try {
+        if (summonInspectArt.decode) {
+          await summonInspectArt.decode();
+        }
+      } catch (_) {}
+
+      // 4. Reset visibility and trigger entrance animation with decoded artwork in place
+      summonInspectCardStage.style.opacity = '';
+      summonInspectCardStage.style.transition = '';
 
       summonInspectCardStage.classList.remove(
         'card-initial-entrance',
@@ -4046,11 +4273,11 @@
 
       const [readyUrl] = await Promise.all([
         ensureCardImageReady(pendingSummonPull[nextIdx]),
-        new Promise(res => setTimeout(res, 180))
+        new Promise(res => setTimeout(res, 380))
       ]);
 
       inspectCurrentIndex = nextIdx;
-      showInspectCard(inspectCurrentIndex, readyUrl, false);
+      await showInspectCard(inspectCurrentIndex, readyUrl, false);
     }
 
     async function proceedPrevInspectCard() {
@@ -4063,11 +4290,11 @@
 
       const [readyUrl] = await Promise.all([
         ensureCardImageReady(pendingSummonPull[prevIdx]),
-        new Promise(res => setTimeout(res, 180))
+        new Promise(res => setTimeout(res, 380))
       ]);
 
       inspectCurrentIndex = prevIdx;
-      showInspectCard(inspectCurrentIndex, readyUrl, false);
+      await showInspectCard(inspectCurrentIndex, readyUrl, false);
     }
 
     if (summonInspectPrevBtn) {
@@ -4113,11 +4340,18 @@
         const tierBadge = getRarityBadgeText(card.rarity);
         const author = card.platform === 'pinterest' ? 'Pinterest creator' : (card.authorName || 'Art');
 
-        cardDiv.className = `gacha-card rarity-${tierClass}`;
+        const variantType = card.variant || 'standard';
+        const variantMeta = CARD_VARIANTS[variantType] || CARD_VARIANTS.standard;
+        const variantBadgeHTML = variantType !== 'standard' 
+          ? `<div class="card-variant-badge variant-badge-${variantType}">${variantMeta.badge}</div>` 
+          : '';
+
+        cardDiv.className = `gacha-card rarity-${tierClass} ${variantType !== 'standard' ? 'variant-' + variantType : ''}`;
         cardDiv.style.animationDelay = `${idx * 0.06}s`;
 
         cardDiv.innerHTML = `
           <div class="gacha-card-badge ${tierClass}">${tierBadge}</div>
+          ${variantBadgeHTML}
           <div class="gacha-card-thumb">
             <img alt="${author}" loading="eager" decoding="async">
           </div>
@@ -4189,14 +4423,62 @@
       }
     }
 
-    function openPokemonCard(card, isSummary = false, animClass = '') {
+    let pokemonNavMode = 'gacha'; // 'gacha' | 'compendium'  | 'summary'
+
+    function getCompendiumUnlockedCards() {
+      const pool = getActiveBannerItems();
+      const tiers = ['SSR', 'SR', 'R', 'N'];
+      const unlocked = [];
+      tiers.forEach(tier => {
+        pool.forEach(item => {
+          const r = (item.gachaRarity || 'N').toUpperCase();
+          const matchTier = (r === 'C') ? 'N' : r;
+          const cid = item.id || item.postId;
+          if (matchTier === tier && unlockedGachaSet.has(cid)) {
+            unlocked.push(item);
+          }
+        });
+      });
+      return unlocked;
+    }
+
+    function openPokemonCard(card, navMode = 'gacha', animClass = '') {
       activePokemonItem = card;
+      
+      // Configure single-card scrap button visibility & price
+      if (pokemonSellCardBtn && pokemonSellPriceLabel) {
+        if (pokemonNavMode === 'compendium') {
+          pokemonSellCardBtn.style.display = 'none';
+        } else {
+          pokemonSellCardBtn.style.display = 'inline-flex';
+          pokemonSellPriceLabel.textContent = getCardScrapValue(card).toLocaleString();
+        }
+      }
+      
+      pokemonNavMode = (navMode === true || navMode === 'summary') ? 'summary' : (navMode || 'gacha');
+
       const rawTier = card.gachaRarity || card.rarity || 'N';
       const tierClass = getRarityClass(rawTier);
       const tierBadge = getRarityBadgeText(rawTier);
 
+      const variantType = card.variant || 'standard';
+      const variantMeta = CARD_VARIANTS[variantType] || CARD_VARIANTS.standard;
+
       pokemonModal.dataset.rarity = tierClass;
-      pokemonCardStage.className = `pokemon-card-stage rarity-${tierClass}`;
+      pokemonCardStage.className = `pokemon-card-stage rarity-${tierClass} ${variantType !== 'standard' ? 'variant-' + variantType : ''}`;
+
+      let pokeVarBadge = pokemonCardStage.querySelector('.card-variant-badge');
+      if (variantType !== 'standard') {
+        if (!pokeVarBadge) {
+          pokeVarBadge = document.createElement('div');
+          pokemonCardStage.appendChild(pokeVarBadge);
+        }
+        pokeVarBadge.className = `card-variant-badge variant-badge-${variantType}`;
+        pokeVarBadge.textContent = variantMeta.badge;
+        pokeVarBadge.style.display = 'block';
+      } else if (pokeVarBadge) {
+        pokeVarBadge.style.display = 'none';
+      }
       if (animClass) {
         pokemonCardStage.classList.add(animClass);
         setTimeout(() => {
@@ -4218,14 +4500,26 @@
       pokemonCardRarityPill.style.setProperty('--rarity-color', rarityColor);
       pokemonCardRarityPill.style.setProperty('--border-mix-color', borderMix);
 
-      if (isSummary) {
+      // ARROW & ACTION CONTROLS BASED ON CALLING CONTEXT
+      if (pokemonNavMode === 'summary') {
+        // Summary Showcase: No navigation arrows
         pokemonSwitchGalleryBtn.style.display = 'none';
         if (pokemonPrevBtn) pokemonPrevBtn.style.display = 'none';
         if (pokemonNextBtn) pokemonNextBtn.style.display = 'none';
-      } else {
+      } else if (pokemonNavMode === 'compendium') {
+        // Art Compendium: Navigate through unlocked compendium cards only
         pokemonSwitchGalleryBtn.style.display = 'inline-flex';
-        if (pokemonPrevBtn) pokemonPrevBtn.style.display = 'flex';
-        if (pokemonNextBtn) pokemonNextBtn.style.display = 'flex';
+        const compList = getCompendiumUnlockedCards();
+        const hasMultiple = compList.length > 1;
+        if (pokemonPrevBtn) pokemonPrevBtn.style.display = hasMultiple ? 'flex' : 'none';
+        if (pokemonNextBtn) pokemonNextBtn.style.display = hasMultiple ? 'flex' : 'none';
+      } else {
+        // Gacha Inventory Browsing
+        pokemonSwitchGalleryBtn.style.display = 'inline-flex';
+        const gachaList = getFilteredAndSortedGachaList();
+        const hasMultiple = gachaList.length > 1;
+        if (pokemonPrevBtn) pokemonPrevBtn.style.display = hasMultiple ? 'flex' : 'none';
+        if (pokemonNextBtn) pokemonNextBtn.style.display = hasMultiple ? 'flex' : 'none';
       }
 
       setCachedOrRemoteSrc(pokemonCardArt, card);
@@ -4240,6 +4534,40 @@
       initAtmosphereParticles(tierClass, pokemonAtmosphereCanvas);
     }
 
+    let isNavigatingPokemonThrottled = false;
+    function navigatePokemon(direction) {
+      if (!activePokemonItem || isNavigatingPokemonThrottled || pokemonNavMode === 'summary') return;
+      isNavigatingPokemonThrottled = true;
+
+      let list = [];
+      if (pokemonNavMode === 'compendium') {
+        list = getCompendiumUnlockedCards();
+      } else {
+        list = getFilteredAndSortedGachaList();
+      }
+
+      if (!list || list.length <= 1) {
+        isNavigatingPokemonThrottled = false;
+        return;
+      }
+
+      const currId = activePokemonItem.summonId || activePokemonItem.id || activePokemonItem.postId;
+      const idx = list.findIndex(c => {
+        const cid = c.summonId || c.id || c.postId;
+        return cid === currId || (c.id && c.id === activePokemonItem.id) || (c.postId && c.postId === activePokemonItem.postId);
+      });
+
+      if (idx !== -1) {
+        const nextIdx = (idx + direction + list.length) % list.length;
+        const anim = direction > 0 ? 'slide-in-right' : 'slide-in-left';
+        openPokemonCard(list[nextIdx], pokemonNavMode, anim);
+      }
+
+      setTimeout(() => {
+        isNavigatingPokemonThrottled = false;
+      }, 160);
+    }
+
     function closePokemonCard() {
       pokemonModal.classList.remove('open');
       pokemonModal.classList.remove('is-zoomed');
@@ -4247,20 +4575,6 @@
       activePokemonItem = null;
       resetPokemonZoom(false);
       clearAtmosphereParticles(pokemonAtmosphereCanvas);
-    }
-
-    function navigatePokemon(direction) {
-      if (!activePokemonItem) return;
-      const list = getFilteredAndSortedGachaList();
-      if (!list || list.length <= 1) return;
-
-      const currId = activePokemonItem.summonId || activePokemonItem.postId || activePokemonItem.id;
-      const idx = list.findIndex(c => (c.summonId || c.postId || c.id) === currId);
-      if (idx !== -1) {
-        const nextIdx = (idx + direction + list.length) % list.length;
-        const anim = direction > 0 ? 'slide-in-right' : 'slide-in-left';
-        openPokemonCard(list[nextIdx], false, anim);
-      }
     }
 
     if (pokemonPrevBtn) pokemonPrevBtn.addEventListener('click', (e) => { e.stopPropagation(); navigatePokemon(-1); });
@@ -4340,9 +4654,6 @@
       pokemonCardStage.style.setProperty('--holo-y', `${holoY.toFixed(1)}%`);
       pokemonCardStage.style.setProperty('--tilt-deg', `${borderTilt.toFixed(1)}deg`);
 
-      pokemonCardRarityPill.style.setProperty('--holo-angle', `${holoAngle.toFixed(1)}deg`);
-      pokemonCardRarityPill.style.setProperty('--holo-x', `${holoX.toFixed(1)}%`);
-      pokemonCardRarityPill.style.setProperty('--holo-y', `${holoY.toFixed(1)}%`);
       pokemonCardRarityPill.style.setProperty('--tilt-deg', `${borderTilt.toFixed(1)}deg`);
     }
 
@@ -4442,6 +4753,9 @@
       if (activeGachaRarityFilter !== 'all') {
         const targetFilter = activeGachaRarityFilter === 'C' ? 'N' : activeGachaRarityFilter;
         list = list.filter(card => {
+          if (targetFilter === 'SHINY') {
+            return card.variant === 'rainbow';
+          }
           const r = card.rarity === 'C' ? 'N' : card.rarity;
           return r === targetFilter;
         });
@@ -4475,16 +4789,27 @@
       const author = card.platform === 'pinterest' ? 'Pinterest creator' : (card.authorName || 'Unknown');
       const summonId = card.summonId || (card.postId + '_' + card.summonedAt);
       const isSelected = selectedGachaSet.has(summonId);
+      const targetUrl = card.imgUrl || card.mediaUrl || (Array.isArray(card.mediaUrls) ? card.mediaUrls[0] : '') || card.fallbackUrl || '';
 
-      div.className = `gacha-card rarity-${tierClass}` + (isSelected ? ' card-selected-highlight' : '');
+      if (!card.imgUrl && targetUrl) card.imgUrl = targetUrl;
+
+const variantType = card.variant || 'standard';
+      const variantMeta = CARD_VARIANTS[variantType] || CARD_VARIANTS.standard;
+      const variantBadgeHTML = variantType !== 'standard' 
+        ? `<div class="card-variant-badge variant-badge-${variantType}">${variantMeta.badge}</div>` 
+        : '';
+
+      div.className = `gacha-card rarity-${tierClass} ${variantType !== 'standard' ? 'variant-' + variantType : ''}` + (isSelected ? ' card-selected-highlight' : '');
       div.dataset.summonId = summonId;
       div.dataset.postId = card.postId || card.id;
+      div.dataset.imgUrl = targetUrl;
 
       div.innerHTML = `
         <input type="checkbox" class="card-select-checkbox" ${isSelected ? 'checked' : ''}>
         <div class="gacha-card-badge ${tierClass}">${tierBadge}</div>
+        ${variantBadgeHTML}
         <div class="gacha-card-thumb">
-          <img alt="${author}" loading="lazy" decoding="async">
+          <img alt="${author}" loading="eager" decoding="async">
         </div>
       `;
 
@@ -5186,8 +5511,6 @@
           completed++;
 
           const pct = Math.min(100, Math.round((completed / total) * 100));
-          importProgressBar.style.width = pct + '%';
-          loadingStats.textContent = `${pct}% (${completed} / ${total} items)`;
           colorAnalysisBadge.textContent = `🎨 ${pct}%`;
 
           if (completed % 4 === 0 || completed === total) {
@@ -5200,10 +5523,6 @@
 
       isBackgroundAnalyzing = false;
       colorAnalysisBadge.style.display = 'none';
-      importProgressBar.style.width = '100%';
-      loadingStats.textContent = '100% Complete!';
-
-      setTimeout(() => importLoadingOverlay.classList.remove('active'), 350);
 
       updateFilterCounts();
       if (activeColorFilter !== 'all' || activeAspectFilter !== 'all') {
@@ -5383,7 +5702,7 @@
     });
 
     // ===================================================
-    // INGESTION & NORMALIZATION ENGINE
+    // INGESTION & NORMALIZATION ENGINE (BACKGROUND LOAD)
     // ===================================================
     function getNormalizedItemSignature(raw, platform) {
       if (raw.id && String(raw.id).trim() && !String(raw.id).startsWith('undefined')) {
@@ -5403,10 +5722,11 @@
       return url.includes('name=120x120');
     }
 
-    async function processIncomingItems(items) {
+    async function processIncomingItems(items, isNewImport = false) {
       const existingSignatures = new Set(currentItems.map(i => i._sig || i.id));
       let dupeCount = 0;
       let added = 0;
+      const newlyAddedItems = [];
 
       for (const raw of items) {
         const platform = detectPlatform(raw);
@@ -5470,7 +5790,7 @@
 
           displayUrls.forEach((rawUrl, pageIdx) => {
             const itemId = canonicalId + '_' + rawUrl.split('/').pop().split('?')[0];
-            currentItems.push({
+            const newItem = {
               id: itemId,
               postId: canonicalId,
               platform: 'twitter',
@@ -5493,7 +5813,9 @@
               userNote: userNote,
               _sig: sig,
               _rand: Math.random()
-            });
+            };
+            currentItems.push(newItem);
+            newlyAddedItems.push(newItem);
             added++;
           });
         } else if (platform === 'pixiv') {
@@ -5529,7 +5851,7 @@
 
           sanitizedList.forEach((mediaUrl, pageIdx) => {
             const pageId = sanitizedList.length > 1 ? `${canonicalId}_p${pageIdx}` : canonicalId;
-            currentItems.push({
+            const newItem = {
               id: pageId,
               postId: canonicalId,
               platform: 'pixiv',
@@ -5552,7 +5874,9 @@
               userNote: userNote,
               _sig: sig,
               _rand: Math.random()
-            });
+            };
+            currentItems.push(newItem);
+            newlyAddedItems.push(newItem);
             added++;
           });
         } else if (platform === 'deviantart') {
@@ -5610,7 +5934,7 @@
 
           rawList.forEach((mediaUrl, pageIdx) => {
             const pageId = rawList.length > 1 ? `${canonicalId}_p${pageIdx}` : canonicalId;
-            currentItems.push({
+            const newItem = {
               id: pageId,
               postId: canonicalId,
               platform: 'deviantart',
@@ -5633,7 +5957,9 @@
               userNote: userNote,
               _sig: sig,
               _rand: Math.random()
-            });
+            };
+            currentItems.push(newItem);
+            newlyAddedItems.push(newItem);
             added++;
           });
         } else if (platform === 'pinterest') {
@@ -5678,7 +6004,7 @@
             });
           }
 
-          currentItems.push({
+          const newItem = {
             id: canonicalId,
             postId: canonicalId,
             platform: 'pinterest',
@@ -5701,7 +6027,9 @@
             userNote: userNote,
             _sig: sig,
             _rand: Math.random()
-          });
+          };
+          currentItems.push(newItem);
+          newlyAddedItems.push(newItem);
           added++;
         } else if (['safebooru', 'rule34'].includes(platform)) {
           const rawList = Array.isArray(raw.mediaUrls) && raw.mediaUrls.length > 0 
@@ -5749,7 +6077,7 @@
             });
           }
 
-          currentItems.push({
+          const newItem = {
             id: canonicalId,
             postId: canonicalId,
             platform: platform,
@@ -5772,7 +6100,9 @@
             userNote: userNote,
             _sig: sig,
             _rand: Math.random()
-          });
+          };
+          currentItems.push(newItem);
+          newlyAddedItems.push(newItem);
           added++;
         }
       }
@@ -5788,20 +6118,27 @@
       rebuildDeterministicPools();
       persistActiveProfileData();
 
-      preloadAllCardImages(currentItems);
-
       if (galleryView.style.display !== 'none') renderColumns();
+
+      // IN-MEMORY BACKGROUND PRELOADING: ENSURE 100% PRELOADED
+      if (isNewImport && newlyAddedItems.length > 0) {
+        resetLoadedCounter(newlyAddedItems.length, true);
+        preloadAllCardImages(newlyAddedItems, (loaded, total) => {
+          fullyLoadedImages = loaded;
+          totalTargetImages = total;
+          updateLoadedCounter();
+        }).then(() => {
+          hasCompletedInitialImport = true;
+          isImportInProgress = false;
+          updateLoadedCounter();
+        });
+      }
+
       runAutoAnalysis();
     }
 
     async function handleMultipleFiles(files) {
       if (!files || !files.length) return;
-
-      importLoadingOverlay.classList.add('active');
-      loadingTitle.textContent = 'Importing Artworks';
-      loadingSubtext.textContent = 'Filtering duplicates & compiling JSON data...';
-      importProgressBar.style.width = '10%';
-      loadingStats.textContent = 'Reading files...';
 
       const fileList = Array.from(files);
       const readPromises = fileList.map(file => {
@@ -5827,17 +6164,10 @@
       const allResults = await Promise.all(readPromises);
       const combined = allResults.flat();
 
-      if (combined.length === 0) {
-        importLoadingOverlay.classList.remove('active');
-        return;
-      }
+      if (combined.length === 0) return;
 
-      loadingTitle.textContent = `Analyzing ${combined.length} Items`;
-      loadingSubtext.textContent = 'Calculating aspect ratios, palettes & deduplicating...';
-      importProgressBar.style.width = '20%';
-      loadingStats.textContent = 'Initializing...';
-
-      await processIncomingItems(combined);
+      showToast(`Processing ${combined.length} artworks in background...`, 'info', '⚡');
+      await processIncomingItems(combined, true);
     }
 
     fileInput.addEventListener('change', (e) => handleMultipleFiles(e.target.files));
@@ -5855,7 +6185,7 @@
     dropzone.addEventListener('click', () => fileInput.click());
 
     // ===================================================
-    // STABLE GRID RENDERING
+    // STABLE GRID RENDERING (FIXES BLACK FLASHING / HOVER BUGS)
     // ===================================================
     function renderColumns() {
       if (galleryView.style.display === 'none' || gallery.clientWidth === 0) return;
@@ -5869,7 +6199,9 @@
       }
       isBatchRendering = false;
 
-      resetLoadedCounter(itemsToRender.length);
+      // Do NOT reset or re-display loadedCountBadge on filter / column changes
+      updateLoadedCounter();
+
       gallery.innerHTML = '';
       renderedCount = 0;
 
@@ -5930,8 +6262,15 @@
       }
     }
 
+    // ROBUST IMAGE LOADER: ELIMINATE BLACK IMAGES BY USING TRANSPARENCY & IMMEDIATE PAINT
     function setCachedOrRemoteSrc(imgElement, item) {
       imgElement.dataset.errAttempt = '0';
+      imgElement.style.background = 'transparent';
+
+      // Normalize URL whether item originated from gallery item or export post
+      const targetUrl = item.imgUrl || item.mediaUrl || (Array.isArray(item.mediaUrls) ? item.mediaUrls[0] : '') || item.fallbackUrl || '';
+      if (!item.imgUrl && targetUrl) item.imgUrl = targetUrl;
+      if (!targetUrl) return;
 
       const attachLoadedListeners = () => {
         imgElement.addEventListener('load', () => {
@@ -5995,6 +6334,7 @@
         if (blob) {
           const objectUrl = URL.createObjectURL(blob);
           blobUrlMap.set(item.imgUrl, objectUrl);
+          preloadedImageCache.set(item.imgUrl, objectUrl);
           imgElement.crossOrigin = 'anonymous';
           imgElement.src = objectUrl;
           attachLoadedListeners();
@@ -6025,24 +6365,14 @@
               return;
             }
 
-            if (attempt === 1 && item.platform === 'pixiv') {
-              if (imgElement.src.includes('.jpg')) {
-                imgElement.src = imgElement.src.replace(/\.jpg(\?|$)/, '.png$1');
-                return;
-              }
-              if (imgElement.src.includes('.png')) {
-                imgElement.src = imgElement.src.replace(/\.png(\?|$)/, '.jpg$1');
-                return;
-              }
-            }
-
-            if (attempt <= 2 && imgElement.src.includes('custom-thumb')) {
-              imgElement.src = imgElement.src.replace('/custom-thumb/', '/img-master/');
+            if (item.fallbackUrl && imgElement.src !== item.fallbackUrl) {
+              imgElement.src = item.fallbackUrl;
               return;
             }
 
-            if (attempt <= 3 && item.fallbackUrl && imgElement.src !== item.fallbackUrl) {
-              imgElement.src = item.fallbackUrl;
+            if (attempt === 1) {
+              const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(item.imgUrl)}`;
+              imgElement.src = proxyUrl;
             }
           };
 
@@ -6051,281 +6381,387 @@
       });
     }
 
+    // ===================================================
+    // CARD CREATORS (TWO ICONS & ANIMATIONS REMOVED)
+    // ===================================================
     function createMediaCard(item, cycle, isCollectionContext = false) {
+      const pId = item.postId || item.id;
+      const isSelected = selectedItemsSet.has(pId);
       const div = document.createElement('div');
-      const isRevealed = unlockedGachaSet.has(item.postId) || unlockedGachaSet.has(item.id);
-      const isSelected = selectedItemsSet.has(item.postId || item.id);
+      div.className = 'media-item' + (isSelected ? ' card-selected-highlight' : '');
+      div.dataset.postId = pId;
+      div.dataset.imgUrl = item.imgUrl;
+
+      if (!isCollectionContext) {
+        const tierClass = getRarityClass(item.gachaRarity);
+        if (unlockedGachaSet.has(pId)) {
+          div.classList.add(`gacha-revealed-${tierClass}`);
+        }
+        if (item.dominantColor) {
+          div.style.setProperty('--card-dom', item.dominantColor);
+        }
+      }
+
+      const pInfo = PLATFORMS[item.platform] || { name: 'Web', letter: 'W' };
       const rawTier = item.gachaRarity || 'N';
       const tierClass = getRarityClass(rawTier);
       const tierBadge = getRarityBadgeText(rawTier);
 
-      div.className = 'media-item' + 
-        (isRevealed ? ` gacha-revealed-${tierClass}` : '') +
-        (isSelected ? ' card-selected-highlight' : '');
-      div.dataset.imgUrl = item.imgUrl;
-      div.dataset.postId = item.postId || item.id;
-      div.dataset.platform = item.platform;
-
-      if (item.dominantColor) {
-        div.style.setProperty('--card-dom', item.dominantColor);
-      }
-
-      const pInfo = PLATFORMS[item.platform] || PLATFORMS.twitter;
       div.innerHTML = `
         <input type="checkbox" class="card-select-checkbox" ${isSelected ? 'checked' : ''}>
         <div class="card-top-badges">
-          ${isRevealed ? `<span class="card-rarity-pill ${tierClass}">${tierBadge}</span>` : ''}
-          ${item.totalPages > 1 ? `<span class="page-pill">📄 ${item.pageIndex + 1}/${item.totalPages}</span>` : ''}
-          ${item.dominantColor ? `<div class="color-chip" style="background:${item.dominantColor}" title="Dominant: ${item.colorFamily}"></div>` : ''}
+          ${!isCollectionContext && unlockedGachaSet.has(pId) ? `<span class="card-rarity-pill ${tierClass}">${tierBadge}</span>` : ''}
+          ${item.totalPages > 1 ? `<span class="page-pill">${item.pageIndex + 1}/${item.totalPages}</span>` : ''}
+          ${item.dominantColor && !isCollectionContext ? `<div class="color-chip" style="background-color:${item.dominantColor};" title="Dominant: ${item.colorFamily}"></div>` : ''}
         </div>
-        <button class="card-delete-btn" title="${isCollectionContext ? 'Remove from collection' : 'Delete post'}">🗑️</button>
-        <div class="platform-dot ${item.platform}" title="${pInfo.name}">${pInfo.letter}</div>
+        <button type="button" class="card-delete-btn" title="${isCollectionContext ? 'Remove from Collection' : 'Delete post'}">🗑️</button>
+        <img alt="Artwork by ${item.authorName || 'Artist'}" loading="eager" decoding="async">
+        ${!isCollectionContext ? `<div class="platform-dot ${item.platform}" title="${pInfo.name}">${pInfo.letter}</div>` : ''}
       `;
 
       const cb = div.querySelector('.card-select-checkbox');
       cb.addEventListener('click', (e) => {
         e.stopPropagation();
-        toggleCardSelection(item.postId || item.id);
+        toggleCardSelection(pId);
       });
 
       const delBtn = div.querySelector('.card-delete-btn');
       delBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         if (isCollectionContext) {
-          removePostFromCollection(item.postId || item.id);
+          removePostFromCollection(pId);
         } else {
-          deletePost(item.postId || item.id);
+          deletePost(pId);
         }
       });
 
-      const img = document.createElement('img');
-      img.decoding = 'async';
-      img.loading = 'lazy';
-      trackImageLoad(img, cycle);
+      const img = div.querySelector('img');
+      img.style.background = 'transparent';
       setCachedOrRemoteSrc(img, item);
-
-      div.appendChild(img);
+      trackImageLoad(img, cycle);
 
       div.addEventListener('click', () => {
         if (isSelectionMode) {
-          toggleCardSelection(item.postId || item.id);
+          toggleCardSelection(pId);
         } else {
           openDetail(item);
         }
       });
+
       return div;
     }
 
     function createPostCard(item, cycle, isCollectionContext = false) {
+      const pId = item.postId || item.id;
+      const isSelected = selectedItemsSet.has(pId);
       const card = document.createElement('div');
-      const isRevealed = unlockedGachaSet.has(item.postId) || unlockedGachaSet.has(item.id);
-      const isSelected = selectedItemsSet.has(item.postId || item.id);
+      card.className = 'post-card' + (isSelected ? ' card-selected-highlight' : '');
+      card.dataset.postId = pId;
+      card.dataset.platform = item.platform;
+
+      if (!isCollectionContext) {
+        const tierClass = getRarityClass(item.gachaRarity);
+        if (unlockedGachaSet.has(pId)) {
+          card.classList.add(`gacha-revealed-${tierClass}`);
+        }
+        if (item.dominantColor) {
+          card.style.setProperty('--card-dom', item.dominantColor);
+        }
+      }
+
+      const pInfo = PLATFORMS[item.platform] || { name: 'Web', letter: 'W' };
       const rawTier = item.gachaRarity || 'N';
       const tierClass = getRarityClass(rawTier);
       const tierBadge = getRarityBadgeText(rawTier);
 
-      card.className = 'post-card' + 
-        (isRevealed ? ` gacha-revealed-${tierClass}` : '') +
-        (isSelected ? ' card-selected-highlight' : '');
-      card.dataset.imgUrl = item.imgUrl;
-      card.dataset.postId = item.postId || item.id;
-      card.dataset.platform = item.platform;
-
-      if (item.dominantColor) {
-        card.style.setProperty('--card-dom', item.dominantColor);
-      }
-
-      const pInfo = PLATFORMS[item.platform] || PLATFORMS.twitter;
-      const author = item.platform === 'pinterest' ? 'Pinterest creator' : (item.authorName || 'Unknown');
-      const handle = item.platform === 'pinterest' ? '@pinterest' : (item.authorHandle || '');
-      const initial = author.charAt(0).toUpperCase();
-      const dateStr = item.timestamp ? new Date(item.timestamp).toLocaleDateString(undefined, {
-        month: 'short', day: 'numeric', year: 'numeric'
-      }) : '';
-
+      const isPinterest = item.platform === 'pinterest';
+      const author = isPinterest ? 'Pinterest creator' : (item.authorName || 'Unknown');
+      const handle = isPinterest ? '@pinterest' : (item.authorHandle || '');
       const profileUrl = getAuthorProfileUrl(item.platform, handle, item);
 
+      let dateStr = '';
+      if (item.timestamp) {
+        const d = new Date(item.timestamp);
+        dateStr = !isNaN(d.getTime()) ? d.toLocaleDateString() : '';
+      }
+
+      // NOTE: "Remove these two icons and it's function (full screen view and go to link) from the card view in gallery"
+      // Clean footer generated with NO post-footer-actions and NO icon buttons!
       card.innerHTML = `
         <input type="checkbox" class="card-select-checkbox" ${isSelected ? 'checked' : ''}>
         <div class="card-top-badges">
-          ${isRevealed ? `<span class="card-rarity-pill ${tierClass}">${tierBadge}</span>` : ''}
-          ${item.totalPages > 1 ? `<span class="page-pill">📄 ${item.pageIndex + 1}/${item.totalPages}</span>` : ''}
-          ${item.dominantColor ? `<div class="color-chip" style="background:${item.dominantColor}" title="Dominant: ${item.colorFamily}"></div>` : ''}
+          ${!isCollectionContext && unlockedGachaSet.has(pId) ? `<span class="card-rarity-pill ${tierClass}">${tierBadge}</span>` : ''}
+          ${item.dominantColor && !isCollectionContext ? `<div class="color-chip" style="background-color:${item.dominantColor};" title="Dominant: ${item.colorFamily}"></div>` : ''}
         </div>
+        <button type="button" class="card-delete-btn" title="${isCollectionContext ? 'Remove from Collection' : 'Delete post'}">🗑️</button>
 
         <div class="post-header">
-          <div class="post-avatar">${initial}</div>
+          <div class="post-avatar">${(author[0] || 'U').toUpperCase()}</div>
           <div class="post-author-block">
             <div class="post-author-name" title="${author}">${author}</div>
-            <a href="${profileUrl}" target="_blank" class="post-author-handle">${handle}</a>
+            <a class="post-author-handle" href="${profileUrl}" target="_blank">${handle}</a>
           </div>
         </div>
 
         ${item.text ? `<div class="post-body-text">${item.text}</div>` : ''}
 
-        <div class="post-media-wrap">
-          <img decoding="async" loading="lazy" alt="Artwork">
-          <button class="card-delete-btn" title="${isCollectionContext ? 'Remove from collection' : 'Delete post'}">🗑️</button>
-          <div class="platform-dot ${item.platform}" title="${pInfo.name}">${pInfo.letter}</div>
+        <div class="post-media-wrap" data-img-url="${item.imgUrl}">
+          ${item.totalPages > 1 ? `<span class="page-pill" style="position:absolute; top:8px; left:8px; z-index:5;">${item.pageIndex + 1}/${item.totalPages}</span>` : ''}
+          <img alt="Post artwork" loading="eager" decoding="async">
+          ${!isCollectionContext ? `<div class="platform-dot ${item.platform}" title="${pInfo.name}">${pInfo.letter}</div>` : ''}
         </div>
 
         <div class="post-footer">
-          <span>${dateStr}</span>
-          <div class="post-footer-actions">
-            <!-- Focus Enlarge Button -->
-            <button type="button" class="post-icon-btn focus-view-btn" title="Enlarge image with background blur">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
-              </svg>
-            </button>
-            <!-- Sleek External Link Button -->
-            <a href="${item.url}" target="_blank" rel="noopener noreferrer" class="post-icon-btn" title="Open source post on ${pInfo.name}">
-              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
-              </svg>
-            </a>
-          </div>
+          <span class="post-date">${dateStr}</span>
         </div>
       `;
 
       const cb = card.querySelector('.card-select-checkbox');
       cb.addEventListener('click', (e) => {
         e.stopPropagation();
-        toggleCardSelection(item.postId || item.id);
+        toggleCardSelection(pId);
       });
 
       const delBtn = card.querySelector('.card-delete-btn');
       delBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         if (isCollectionContext) {
-          removePostFromCollection(item.postId || item.id);
+          removePostFromCollection(pId);
         } else {
-          deletePost(item.postId || item.id);
+          deletePost(pId);
         }
       });
 
-      const focusBtn = card.querySelector('.focus-view-btn');
-      focusBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const fullSrc = item.imgUrl || item.mediaUrl || item.fallbackUrl;
-        openFocusBlurView(fullSrc);
-      });
-
-      const img = card.querySelector('.post-media-wrap img');
-      trackImageLoad(img, cycle);
+      const mediaWrap = card.querySelector('.post-media-wrap');
+      const img = mediaWrap.querySelector('img');
+      img.style.background = 'transparent';
       setCachedOrRemoteSrc(img, item);
+      trackImageLoad(img, cycle);
 
-      card.querySelector('.post-media-wrap').addEventListener('click', () => {
+      mediaWrap.addEventListener('click', (e) => {
+        e.stopPropagation();
         if (isSelectionMode) {
-          toggleCardSelection(item.postId || item.id);
+          toggleCardSelection(pId);
         } else {
           openDetail(item);
         }
       });
+
+      card.addEventListener('click', () => {
+        if (isSelectionMode) {
+          toggleCardSelection(pId);
+        } else {
+          openDetail(item);
+        }
+      });
+
       return card;
     }
 
     // ===================================================
-    // MODAL ZOOM, GESTURES & ARROW NAVIGATION
+    // LIGHTBOX DETAILS MODAL (ALL ARROWS REMOVED FOR CLEAN BROWSING)
     // ===================================================
-    let modalScale = 1;
-    let modalTranslateX = 0;
-    let modalTranslateY = 0;
-    let isPanningModal = false;
-    let panStartX = 0;
-    let panStartY = 0;
-    let touchInitialDist = 0;
-    let touchStartScale = 1;
-    let lastTapTimestamp = 0;
+    let lightboxScale = 1;
+    let lightboxPanX = 0;
+    let lightboxPanY = 0;
+    let isPanningLightbox = false;
+    let panStartLightboxX = 0;
+    let panStartLightboxY = 0;
+    let touchDistLightbox = 0;
+    let touchStartScaleLightbox = 1;
+    let lastTapLightbox = 0;
 
-    function applyModalTransform(animate = false) {
-      modalImg.style.transition = animate ? 'transform 0.18s ease-out' : 'none';
-      modalImg.style.transform = `translate3d(${modalTranslateX}px, ${modalTranslateY}px, 0) scale(${modalScale})`;
-      if (modalScale <= 1) {
-        modalImg.classList.remove('is-panning');
-        modal.classList.remove('is-zoomed');
-      } else {
+    function applyLightboxTransform(animate = false) {
+      modalImg.style.transition = animate ? 'transform 0.18s cubic-bezier(0.16, 1, 0.3, 1)' : 'none';
+      if (lightboxScale > 1) {
         modal.classList.add('is-zoomed');
+        modalImg.style.transform = `translate3d(${lightboxPanX}px, ${lightboxPanY}px, 0) scale3d(${lightboxScale}, ${lightboxScale}, 1)`;
+      } else {
+        modal.classList.remove('is-zoomed');
+        modalImg.style.transform = `translate3d(0, 0, 0) scale3d(1, 1, 1)`;
       }
     }
 
-    function resetModalZoom(animate = true) {
-      modalScale = 1;
-      modalTranslateX = 0;
-      modalTranslateY = 0;
-      isPanningModal = false;
+    function resetLightboxZoom(animate = true) {
+      lightboxScale = 1;
+      lightboxPanX = 0;
+      lightboxPanY = 0;
+      isPanningLightbox = false;
       modalImg.classList.remove('is-panning');
       modal.classList.remove('is-zoomed');
-      applyModalTransform(animate);
+      applyLightboxTransform(animate);
     }
 
-    function setModalZoom(newScale) {
-      const clamped = Math.max(1, Math.min(newScale, 5));
-      if (clamped === 1) {
-        resetModalZoom(true);
-        return;
+    function setLightboxZoom(newScale) {
+      const clamped = Math.max(1, Math.min(newScale, 4.5));
+      lightboxScale = clamped;
+      if (lightboxScale <= 1) {
+        resetLightboxZoom(true);
+      } else {
+        modal.classList.add('is-zoomed');
+        applyLightboxTransform(true);
       }
-      modalScale = clamped;
-      modal.classList.add('is-zoomed');
-      applyModalTransform(true);
+    }
+
+    async function openDetail(item) {
+      activeModalItem = item;
+      resetLightboxZoom(false);
+
+      modalDetails.classList.remove('expanded');
+
+      const isPinterest = item.platform === 'pinterest';
+      const author = isPinterest ? 'Pinterest creator' : (item.authorName || 'Unknown');
+      const handle = isPinterest ? '@pinterest' : (item.authorHandle || '');
+      const profileUrl = getAuthorProfileUrl(item.platform, handle, item);
+
+      document.getElementById('modalAuthor').textContent = author;
+      const handleEl = document.getElementById('modalHandle');
+      handleEl.textContent = handle;
+      handleEl.href = profileUrl;
+
+      if (drawerAuthorPreview) drawerAuthorPreview.textContent = `ℹ️ ${author} (${handle})`;
+
+      document.getElementById('modalText').textContent = item.text || '';
+      document.getElementById('modalDate').textContent = item.timestamp ? new Date(item.timestamp).toLocaleString() : '';
+
+      const linkBtn = document.getElementById('modalLink');
+      linkBtn.href = item.url || '#';
+      linkBtn.style.display = (item.url && item.url !== '#') ? 'inline-flex' : 'none';
+
+      const postData = allImportedPosts.get(item.postId || item.id);
+      const mediaList = postData?.mediaUrls || item.allMedia || [item.imgUrl];
+
+      if (mediaList.length > 1) {
+        multiMediaWrap.style.display = 'block';
+        postThumbs.innerHTML = '';
+        mediaList.forEach((u, i) => {
+          const btn = document.createElement('div');
+          btn.className = `thumb-btn ${u === item.imgUrl ? 'active' : ''}`;
+          btn.innerHTML = `<img alt="thumbnail" loading="lazy" decoding="async">`;
+          const thumbImg = btn.querySelector('img');
+          setCachedOrRemoteSrc(thumbImg, { ...item, imgUrl: u });
+
+          btn.addEventListener('click', () => {
+            postThumbs.querySelectorAll('.thumb-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            item.imgUrl = u;
+            item.pageIndex = i;
+            modalDimensionBadge.style.display = 'none';
+            setCachedOrRemoteSrc(modalImg, item);
+            updateModalPagePill(item, mediaList.length);
+          });
+          postThumbs.appendChild(btn);
+        });
+      } else {
+        multiMediaWrap.style.display = 'none';
+      }
+
+      updateModalPagePill(item, mediaList.length);
+      setCachedOrRemoteSrc(modalImg, item);
+
+      modalImg.onload = () => {
+        if (modalImg.naturalWidth && modalImg.naturalHeight) {
+          modalDimText.textContent = `${modalImg.naturalWidth} × ${modalImg.naturalHeight}`;
+          modalDimensionBadge.style.display = 'inline-flex';
+        }
+      };
+
+      // 1. Show the modal instantly for a highly responsive UI
+      modal.classList.add('open');
+      document.body.style.overflow = 'hidden';
+
+      // 2. Load custom user tags/notes asynchronously in the background
+      await loadUserMeta(item.postId || item.id);
+    }
+
+    function updateModalPagePill(item, total) {
+      if (total > 1) {
+        modalPagePill.style.display = 'inline-flex';
+        modalPagePill.textContent = `Page ${item.pageIndex + 1} / ${total}`;
+      } else {
+        modalPagePill.style.display = 'none';
+      }
+    }
+
+    function closeModal() {
+      modal.classList.remove('open');
+      modal.classList.remove('is-zoomed');
+      modalDetails.classList.remove('expanded');
+      document.body.style.overflow = '';
+      activeModalItem = null;
+      resetLightboxZoom(false);
+      modalDimensionBadge.style.display = 'none';
+    }
+
+    closeBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal || e.target === modalMedia) closeModal();
+    });
+
+    if (modalDetailsToggle) {
+      modalDetailsToggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        modalDetails.classList.toggle('expanded');
+      });
     }
 
     modalMedia.addEventListener('wheel', (e) => {
       e.preventDefault();
-      const zoomFactor = e.deltaY < 0 ? 1.18 : 0.85;
-      setModalZoom(modalScale * zoomFactor);
+      const zoomDelta = e.deltaY < 0 ? 0.25 : -0.25;
+      setLightboxZoom(lightboxScale + zoomDelta);
     }, { passive: false });
 
     modalImg.addEventListener('mousedown', (e) => {
-      if (modalScale <= 1) return;
+      if (lightboxScale <= 1) return;
       e.preventDefault();
-      isPanningModal = true;
-      panStartX = e.clientX - modalTranslateX;
-      panStartY = e.clientY - modalTranslateY;
+      isPanningLightbox = true;
+      panStartLightboxX = e.clientX - lightboxPanX;
+      panStartLightboxY = e.clientY - lightboxPanY;
       modalImg.classList.add('is-panning');
     });
 
     window.addEventListener('mousemove', (e) => {
-      if (!isPanningModal || modalScale <= 1) return;
-      modalTranslateX = e.clientX - panStartX;
-      modalTranslateY = e.clientY - panStartY;
-      applyModalTransform(false);
+      if (isPanningLightbox && lightboxScale > 1) {
+        lightboxPanX = e.clientX - panStartLightboxX;
+        lightboxPanY = e.clientY - panStartLightboxY;
+        applyLightboxTransform(false);
+      }
     });
 
     window.addEventListener('mouseup', () => {
-      if (isPanningModal) {
-        isPanningModal = false;
+      if (isPanningLightbox) {
+        isPanningLightbox = false;
         modalImg.classList.remove('is-panning');
       }
     });
 
     modalImg.addEventListener('dblclick', (e) => {
       e.preventDefault();
-      if (modalScale > 1) resetModalZoom(true);
-      else setModalZoom(2.5);
+      if (lightboxScale > 1) resetLightboxZoom(true);
+      else setLightboxZoom(2.2);
     });
 
     modalMedia.addEventListener('touchstart', (e) => {
       if (e.touches.length === 2) {
-        touchInitialDist = Math.hypot(
+        touchDistLightbox = Math.hypot(
           e.touches[0].clientX - e.touches[1].clientX,
           e.touches[0].clientY - e.touches[1].clientY
         );
-        touchStartScale = modalScale;
+        touchStartScaleLightbox = lightboxScale;
       } else if (e.touches.length === 1) {
         const now = Date.now();
-        if (now - lastTapTimestamp < 300) {
-          if (modalScale > 1) resetModalZoom(true);
-          else setModalZoom(2.5);
-          lastTapTimestamp = 0;
+        if (now - lastTapLightbox < 300) {
+          if (lightboxScale > 1) resetLightboxZoom(true);
+          else setLightboxZoom(2.2);
+          lastTapLightbox = 0;
           return;
         }
-        lastTapTimestamp = now;
+        lastTapLightbox = now;
 
-        if (modalScale > 1) {
-          isPanningModal = true;
-          panStartX = e.touches[0].clientX - modalTranslateX;
-          panStartY = e.touches[0].clientY - modalTranslateY;
+        if (lightboxScale > 1) {
+          isPanningLightbox = true;
+          panStartLightboxX = e.touches[0].clientX - lightboxPanX;
+          panStartLightboxY = e.touches[0].clientY - lightboxPanY;
           modalImg.classList.add('is-panning');
         }
       }
@@ -6338,272 +6774,1127 @@
           e.touches[0].clientX - e.touches[1].clientX,
           e.touches[0].clientY - e.touches[1].clientY
         );
-        if (touchInitialDist > 0) {
-          const ratio = dist / touchInitialDist;
-          modalScale = Math.max(1, Math.min(touchStartScale * ratio, 5));
-          if (modalScale <= 1) {
-            modalTranslateX = 0;
-            modalTranslateY = 0;
+        if (touchDistLightbox > 0) {
+          const ratio = dist / touchDistLightbox;
+          lightboxScale = Math.max(1, Math.min(touchStartScaleLightbox * ratio, 4.5));
+          if (lightboxScale <= 1) {
+            lightboxPanX = 0;
+            lightboxPanY = 0;
             modal.classList.remove('is-zoomed');
           } else {
             modal.classList.add('is-zoomed');
           }
-          applyModalTransform(false);
+          applyLightboxTransform(false);
         }
-      } else if (e.touches.length === 1 && isPanningModal && modalScale > 1) {
+      } else if (e.touches.length === 1 && isPanningLightbox && lightboxScale > 1) {
         e.preventDefault();
-        modalTranslateX = e.touches[0].clientX - panStartX;
-        modalTranslateY = e.touches[0].clientY - panStartY;
-        applyModalTransform(false);
+        lightboxPanX = e.touches[0].clientX - panStartLightboxX;
+        lightboxPanY = e.touches[0].clientY - panStartLightboxY;
+        applyLightboxTransform(false);
       }
     }, { passive: false });
 
     modalMedia.addEventListener('touchend', (e) => {
-      if (e.touches.length < 2) touchInitialDist = 0;
+      if (e.touches.length < 2) touchDistLightbox = 0;
       if (e.touches.length === 0) {
-        isPanningModal = false;
+        isPanningLightbox = false;
         modalImg.classList.remove('is-panning');
-        if (modalScale <= 1) {
+        if (lightboxScale <= 1) {
           modal.classList.remove('is-zoomed');
-          resetModalZoom(true);
+          applyLightboxTransform(true);
         }
       }
     });
 
-    if (modalDetailsToggle) {
-      modalDetailsToggle.addEventListener('click', (e) => {
-        e.stopPropagation();
-        modalDetails.classList.toggle('expanded');
-      });
-    }
-
-    modalMedia.addEventListener('click', () => {
-      if (window.innerWidth <= 800 && modalDetails && modalDetails.classList.contains('expanded')) {
-        modalDetails.classList.remove('expanded');
-      }
+    // ===================================================
+    // VIEW SWITCHER
+    // ===================================================
+    viewPostsBtn.addEventListener('click', () => {
+      currentViewMode = 'posts';
+      viewPostsBtn.classList.add('active');
+      viewMediaBtn.classList.remove('active');
+      renderColumns();
     });
 
-    // LIGHTBOX PREVIOUS / NEXT ARROW NAVIGATION WITH TRANSITION ANIMATIONS
-    function navigateLightbox(direction) {
-      if (!activeModalItem) return;
-
-      let list = [];
-      if (collectionsView.style.display !== 'none' && activeCollectionId && customCollections[activeCollectionId]) {
-        const colIdSet = new Set(customCollections[activeCollectionId].itemIds);
-        list = currentItems.filter(i => colIdSet.has(i.postId || i.id));
-      } else {
-        list = getActiveFilteredList();
-      }
-
-      if (!list || list.length <= 1) return;
-
-      const currId = activeModalItem.id || activeModalItem.postId;
-      const idx = list.findIndex(i => (i.id || i.postId) === currId);
-      if (idx !== -1) {
-        const nextIdx = (idx + direction + list.length) % list.length;
-        const anim = direction > 0 ? 'slide-in-right' : 'slide-in-left';
-        openDetail(list[nextIdx], anim);
-      }
-    }
-
-    if (modalPrevBtn) modalPrevBtn.addEventListener('click', (e) => { e.stopPropagation(); navigateLightbox(-1); });
-    if (modalNextBtn) modalNextBtn.addEventListener('click', (e) => { e.stopPropagation(); navigateLightbox(1); });
-
-    function openDetail(item, animClass = '') {
-      activeModalItem = item;
-      resetModalZoom(false);
-      setCachedOrRemoteSrc(modalImg, item);
-
-      if (animClass) {
-        modalImg.classList.add(animClass);
-        setTimeout(() => {
-          modalImg.classList.remove('slide-in-right', 'slide-in-left');
-        }, 240);
-      }
-
-      // Update delete button text if in collection view
-      if (collectionsView.style.display !== 'none' && activeCollectionId) {
-        modalDeleteBtn.textContent = '❌ Remove from Collection';
-      } else {
-        modalDeleteBtn.textContent = '🗑️ Delete Post';
-      }
-
-      // DIMENSION BADGE UPDATE
-      const updateDimDisplay = () => {
-        if (item._width && item._height) {
-          modalDimText.textContent = `${item._width} × ${item._height}`;
-          modalDimensionBadge.style.display = 'inline-flex';
-        } else if (modalImg.naturalWidth && modalImg.naturalHeight) {
-          item._width = modalImg.naturalWidth;
-          item._height = modalImg.naturalHeight;
-          modalDimText.textContent = `${modalImg.naturalWidth} × ${modalImg.naturalHeight}`;
-          modalDimensionBadge.style.display = 'inline-flex';
-        } else {
-          modalDimensionBadge.style.display = 'none';
-        }
-      };
-      updateDimDisplay();
-      modalImg.addEventListener('load', updateDimDisplay, { once: true });
-
-      const author = item.platform === 'pinterest' ? 'Pinterest creator' : (item.authorName || 'Unknown');
-      const handle = item.platform === 'pinterest' ? '@pinterest' : (item.authorHandle || '');
-
-      if (modalDetails) modalDetails.classList.remove('expanded');
-      if (drawerAuthorPreview) drawerAuthorPreview.textContent = `ℹ️ ${author}`;
-
-      const pInfo = PLATFORMS[item.platform] || PLATFORMS.twitter;
-
-      if (item.totalPages > 1) {
-        modalPagePill.style.display = 'inline-flex';
-        modalPagePill.textContent = `📄 ${item.pageIndex + 1} / ${item.totalPages}`;
-      } else {
-        modalPagePill.style.display = 'none';
-      }
-
-      document.getElementById('modalAuthor').textContent = author;
-      const handleEl = document.getElementById('modalHandle');
-      handleEl.textContent = handle;
-      handleEl.href = getAuthorProfileUrl(item.platform, handle, item);
-
-      const postTextEl = document.getElementById('modalText');
-      if (item.text) {
-        postTextEl.textContent = item.text;
-        postTextEl.style.display = 'block';
-      } else {
-        postTextEl.style.display = 'none';
-      }
-
-      const dateStr = item.timestamp ? new Date(item.timestamp).toLocaleDateString(undefined, {
-        year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit'
-      }) : '';
-      document.getElementById('modalDate').textContent = dateStr;
-
-      const linkEl = document.getElementById('modalLink');
-      linkEl.href = item.url;
-      linkEl.textContent = `Go to post on ${pInfo.name} \u2192`;
-
-      // Multi-image pages thumb strip
-      if (item.allMedia && item.allMedia.length > 1) {
-        multiMediaWrap.style.display = 'block';
-        postThumbs.innerHTML = '';
-        item.allMedia.forEach((mediaUrl, idx) => {
-          const thumbBtn = document.createElement('div');
-          thumbBtn.className = 'thumb-btn' + (idx === item.pageIndex ? ' active' : '');
-          const thumbImg = document.createElement('img');
-          thumbImg.loading = 'lazy';
-          setCachedOrRemoteSrc(thumbImg, { imgUrl: mediaUrl, platform: item.platform });
-          thumbBtn.appendChild(thumbImg);
-          thumbBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const target = currentItems.find(i => (i.postId === item.postId || i.id === item.postId) && i.pageIndex === idx);
-            if (target) openDetail(target);
-          });
-          postThumbs.appendChild(thumbBtn);
-        });
-      } else {
-        multiMediaWrap.style.display = 'none';
-      }
-
-      loadUserMeta(item.postId || item.id);
-
-      modal.classList.add('open');
-      document.body.style.overflow = 'hidden';
-    }
-
-    function closeModal() {
-      modal.classList.remove('open');
-      modal.classList.remove('is-zoomed');
-      document.body.style.overflow = '';
-      activeModalItem = null;
-      resetModalZoom(false);
-    }
-
-    closeBtn.addEventListener('click', closeModal);
-    modal.addEventListener('click', (e) => {
-      if (e.target === modal) closeModal();
+    viewMediaBtn.addEventListener('click', () => {
+      currentViewMode = 'media';
+      viewMediaBtn.classList.add('active');
+      viewPostsBtn.classList.remove('active');
+      renderColumns();
     });
 
     // ===================================================
-    // GLOBAL KEYBOARD NAVIGATION SHORTCUTS
+    // KEYBOARD NAVIGATION (RESTRICTED ONLY TO GACHA TAB)
     // ===================================================
+    let keyNavThrottleTimer = null;
+
     window.addEventListener('keydown', (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
       if (e.key === 'Escape') {
-        if (focusBlurOverlay.classList.contains('open')) closeFocusBlurView();
-        else if (userNotesModal.classList.contains('open')) userNotesModal.classList.remove('open');
-        else if (modal.classList.contains('open')) closeModal();
-        else if (pokemonModal.classList.contains('open')) closePokemonCard();
-        else if (gachaSummonOverlay.classList.contains('active')) summonCloseBtn.click();
-        else if (isSelectionMode) setSelectionMode(false);
-        else if (isGachaSelectionMode) setGachaSelectionMode(false);
+        if (userNotesModal && userNotesModal.classList.contains('open')) {
+          userNotesModal.classList.remove('open');
+          return;
+        }
+        if (actionLogsModal && actionLogsModal.classList.contains('open')) {
+          actionLogsModal.classList.remove('open');
+          return;
+        }
+        if (customDialogModal && customDialogModal.classList.contains('open')) {
+          closeCustomDialog(null);
+          return;
+        }
+        if (pokemonModal && pokemonModal.classList.contains('open')) {
+          closePokemonCard();
+          return;
+        }
+        if (modal && modal.classList.contains('open')) {
+          closeModal();
+          return;
+        }
+        if (gachaSummonOverlay && gachaSummonOverlay.classList.contains('active')) {
+          gachaSummonOverlay.classList.remove('active');
+          document.body.style.overflow = '';
+          clearAtmosphereParticles(summonInspectAtmosphereCanvas);
+          return;
+        }
+        if (isSelectionMode) setSelectionMode(false);
+        if (isGachaSelectionMode) setGachaSelectionMode(false);
+        return;
       }
 
-      if (modal.classList.contains('open')) {
-        if (e.key === 'ArrowLeft') {
+      // THROTTELED ARROW NAVIGATION: RUNS ONLY ON GACHA MODALS TO PREVENT CRAZY PARTICLES
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        if (keyNavThrottleTimer) return;
+        keyNavThrottleTimer = setTimeout(() => {
+          keyNavThrottleTimer = null;
+        }, 150);
+
+        if (pokemonModal && pokemonModal.classList.contains('open')) {
           e.preventDefault();
-          navigateLightbox(-1);
-        } else if (e.key === 'ArrowRight') {
-          e.preventDefault();
-          navigateLightbox(1);
+          navigatePokemon(e.key === 'ArrowRight' ? 1 : -1);
+          return;
         }
-      } else if (pokemonModal.classList.contains('open')) {
-        if (e.key === 'ArrowLeft') {
+
+        if (summonStageInspect && summonStageInspect.style.display === 'flex') {
           e.preventDefault();
-          navigatePokemon(-1);
-        } else if (e.key === 'ArrowRight') {
-          e.preventDefault();
-          navigatePokemon(1);
-        }
-      } else if (summonStageInspect && summonStageInspect.style.display === 'flex') {
-        if (e.key === 'ArrowLeft') {
-          e.preventDefault();
-          proceedPrevInspectCard();
-        } else if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'Enter') {
-          e.preventDefault();
-          proceedNextInspectCard();
+          if (e.key === 'ArrowRight') proceedNextInspectCard();
+          else proceedPrevInspectCard();
+          return;
         }
       }
     });
 
     // ===================================================
-    // VIEW SWITCHERS (CARDS VS IMAGES)
+    // SCROLL & RESIZE LISTENERS
     // ===================================================
-    viewPostsBtn.addEventListener('click', () => {
-      if (currentViewMode === 'posts') return;
-      currentViewMode = 'posts';
-      viewPostsBtn.classList.add('active');
-      viewMediaBtn.classList.remove('active');
-      if (galleryView.style.display !== 'none') renderColumns();
-      else if (collectionsView.style.display !== 'none' && activeCollectionId) openCollection(activeCollectionId);
-    });
+    window.addEventListener('scroll', () => {
+      if (galleryView.style.display !== 'none' && !isBatchRendering) {
+        const nearBottom = window.innerHeight + window.scrollY >= document.body.offsetHeight - 950;
+        if (nearBottom && renderedCount < getActiveFilteredList().length) {
+          appendNextBatch(currentRenderCycle);
+        }
+      }
+    }, { passive: true });
 
-    viewMediaBtn.addEventListener('click', () => {
-      if (currentViewMode === 'media') return;
-      currentViewMode = 'media';
-      viewMediaBtn.classList.add('active');
-      viewPostsBtn.classList.remove('active');
-      if (galleryView.style.display !== 'none') renderColumns();
-      else if (collectionsView.style.display !== 'none' && activeCollectionId) openCollection(activeCollectionId);
-    });
-
-    // Window Resize Handling for Columns
+    let resizeTimer;
     window.addEventListener('resize', () => {
-      updateColZoomUI();
-      updateGachaColZoomUI();
-      if (window.innerWidth <= 800) {
-        document.querySelectorAll('.dropdown-menu.open').forEach(adjustDropdownPlacement);
-      }
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        updateColZoomUI();
+        updateGachaColZoomUI();
+        if (galleryView.style.display !== 'none') {
+          renderColumns();
+        } else if (collectionsView.style.display !== 'none' && activeCollectionId) {
+          openCollection(activeCollectionId);
+        } else if (gachaView.style.display !== 'none') {
+          if (gachaSubTabCompendium && gachaSubTabCompendium.classList.contains('active')) {
+            renderCompendium();
+          } else {
+            renderGachaResults();
+          }
+        }
+      }, 160);
     });
 
     // ===================================================
-    // INITIAL BOOTSTRAP
+    // STOCK & CRYPTO CANDLESTICK ENGINE
+    // ===================================================
+    const tabMarket = document.getElementById('tabMarket');
+    const marketView = document.getElementById('marketView');
+    const marketCanvas = document.getElementById('marketCanvas');
+    const navWalletCreditsBadge = document.getElementById('navWalletCreditsBadge');
+    const marketCashLabel = document.getElementById('marketCashLabel');
+    const marketHoldingsLabel = document.getElementById('marketHoldingsLabel');
+    const marketAvgCostLabel = document.getElementById('marketAvgCostLabel');
+    const marketPnlLabel = document.getElementById('marketPnlLabel');
+    const chartSymbolLabel = document.getElementById('chartSymbolLabel');
+    const chartPriceLabel = document.getElementById('chartPriceLabel');
+    const chartChangeLabel = document.getElementById('chartChangeLabel');
+    const tradeSharesInput = document.getElementById('tradeSharesInput');
+    const dailyLoginClaimBtn = document.getElementById('dailyLoginClaimBtn');
+
+    // Volatility configurations & mathematical step dampening
+    const ASSETS = {
+      BOORU: { 
+        symbol: '$BOORU', 
+        name: 'Booru Meme Coin', 
+        basePrice: 50.0, 
+        minPrice: 5.0, 
+        color: '#ffea00',
+        jitter: 0.014, // higher volatility noise
+        wickScale: 0.055,
+        candleSpeed: 0.45,
+        forecast: null
+      },
+      PIX: { 
+        symbol: '$PIX', 
+        name: 'Pixiv Blue Chip', 
+        basePrice: 120.0, 
+        minPrice: 30.0, 
+        color: '#00F5FF',
+        jitter: 0.003, // smooth institutional adherence
+        wickScale: 0.015,
+        candleSpeed: 0.28,
+        forecast: null
+      },
+      GACHA: { 
+        symbol: '$GACHA', 
+        name: 'Gacha Index Fund', 
+        basePrice: 300.0, 
+        minPrice: 60.0, 
+        color: '#A855F7',
+        jitter: 0.007, // balanced fund stepping
+        wickScale: 0.025,
+        candleSpeed: 0.36,
+        forecast: null
+      }
+    };
+
+    let activeAssetKey = 'BOORU';
+    let marketCash = 1000;
+    let marketBuyLots = []; // Registers each individual buy lot
+    let marketCandles = { BOORU: [], PIX: [], GACHA: [] };
+    let marketTickerTimer = null;
+
+    // Mathematically calibrated wave generator:
+    // Computes compounding stepFactor: (1 + targetPct/100)^(1 / totalTicks)
+    // Prevents astronomical runaway values regardless of timeframe
+    // ===================================================
+    // MULTI-TIMEFRAME FORECAST ENGINE (SHORT, MID, LONG)
+    // ===================================================
+    function rollLongTermForecast(assetKey) {
+      const asset = ASSETS[assetKey];
+      const currPrice = getCurrentPrice(assetKey);
+
+      let nextDir;
+      if (currPrice >= asset.basePrice * 2.8) {
+        nextDir = 'DOWN';
+      } else if (currPrice <= asset.minPrice * 1.35) {
+        nextDir = 'UP';
+      } else if (asset.forecasts?.long) {
+        nextDir = asset.forecasts.long.direction === 'UP' ? 'DOWN' : 'UP';
+      } else {
+        nextDir = Math.random() > 0.45 ? 'UP' : 'DOWN';
+      }
+
+      // Macro Trend: 300 to 550 ticks (8m to 15m)
+      const ticks = Math.floor(Math.random() * 250) + 300;
+      const targetPct = nextDir === 'UP'
+        ? Math.floor(Math.random() * 35 + 45)   // +45% to +80% Macro Bull
+        : -Math.floor(Math.random() * 20 + 25); // -25% to -45% Macro Bear
+
+      const stepFactor = Math.pow(1 + (targetPct / 100), 1 / ticks);
+
+      return {
+        direction: nextDir,
+        ticksLeft: ticks,
+        totalTicks: ticks,
+        targetPct: targetPct,
+        stepFactor: stepFactor
+      };
+    }
+
+    function rollMidTermForecast(assetKey) {
+      const asset = ASSETS[assetKey];
+      const longDir = asset.forecasts?.long?.direction || 'UP';
+
+      // 65% chance to align with long trend; 35% chance of healthy pullback wave
+      const isAligned = Math.random() < 0.65;
+      const nextDir = isAligned ? longDir : (longDir === 'UP' ? 'DOWN' : 'UP');
+
+      // Swing Cycle: 35 to 65 ticks (~1m to 2m)
+      const ticks = Math.floor(Math.random() * 30) + 35;
+      let targetPct;
+      if (nextDir === 'UP') {
+        targetPct = isAligned ? Math.floor(Math.random() * 10 + 10) : Math.floor(Math.random() * 5 + 5);
+      } else {
+        targetPct = isAligned ? -Math.floor(Math.random() * 8 + 8) : -Math.floor(Math.random() * 5 + 5);
+      }
+
+      const stepFactor = Math.pow(1 + (targetPct / 100), 1 / ticks);
+
+      return {
+        direction: nextDir,
+        ticksLeft: ticks,
+        totalTicks: ticks,
+        targetPct: targetPct,
+        stepFactor: stepFactor,
+        isPullback: !isAligned
+      };
+    }
+
+    function rollShortTermForecast(assetKey) {
+      const asset = ASSETS[assetKey];
+      const prevShort = asset.forecasts?.short;
+      const nextDir = prevShort ? (prevShort.direction === 'UP' ? 'DOWN' : 'UP') : (Math.random() > 0.5 ? 'UP' : 'DOWN');
+
+      // Micro Scalp Wave: 8 to 16 ticks (12s to 26s)
+      const ticks = Math.floor(Math.random() * 8) + 8;
+      const targetPct = nextDir === 'UP'
+        ? +(Math.random() * 2.5 + 1.8).toFixed(1)
+        : -(Math.random() * 2.2 + 1.6).toFixed(1);
+
+      const stepFactor = Math.pow(1 + (targetPct / 100), 1 / ticks);
+
+      return {
+        direction: nextDir,
+        ticksLeft: ticks,
+        totalTicks: ticks,
+        targetPct: targetPct,
+        stepFactor: stepFactor
+      };
+    }
+
+    function ensureAssetForecasts(assetKey) {
+      const asset = ASSETS[assetKey];
+      if (!asset) return null;
+      if (!asset.forecasts || !asset.forecasts.long || !asset.forecasts.mid || !asset.forecasts.short) {
+        asset.forecasts = {
+          long: rollLongTermForecast(assetKey),
+          mid: rollMidTermForecast(assetKey),
+          short: rollShortTermForecast(assetKey)
+        };
+      }
+      asset.forecast = asset.forecasts.short;
+      return asset.forecasts;
+    }
+
+    Object.keys(ASSETS).forEach(k => {
+      ensureAssetForecasts(k);
+    });
+
+    function initCandleHistory(assetKey) {
+      const asset = ASSETS[assetKey];
+      let price = asset.basePrice;
+      const history = [];
+      const numCandles = 32;
+
+      for (let i = 0; i < numCandles; i++) {
+        const delta = (Math.random() - 0.48) * (price * 0.04);
+        const open = price;
+        const close = Math.max(asset.minPrice, open + delta);
+        const high = Math.max(open, close) + Math.random() * (price * asset.wickScale);
+        const low = Math.min(open, close) - Math.random() * (price * asset.wickScale);
+        history.push({ open, close, high, low });
+        price = close;
+      }
+      return history;
+    }
+
+    Object.keys(ASSETS).forEach(k => {
+      marketCandles[k] = initCandleHistory(k);
+    });
+
+    function getCurrentPrice(assetKey) {
+      const list = marketCandles[assetKey];
+      if (!list || !list.length) return ASSETS[assetKey].basePrice;
+      return list[list.length - 1].close;
+    }
+
+    // AGGREGATED STATS COMPUTED LIVE ACROSS ACTIVE BUY LOTS
+    function getAssetHoldingStats(assetKey) {
+      const lots = marketBuyLots.filter(l => l.assetKey === assetKey);
+      const totalShares = lots.reduce((sum, l) => sum + l.shares, 0);
+      const totalCost = lots.reduce((sum, l) => sum + l.totalCost, 0);
+      const avgPrice = totalShares > 0 ? totalCost / totalShares : 0;
+      return { totalShares, totalCost, avgPrice, lotsCount: lots.length };
+    }
+
+    function getHoldingAvgCost(assetKey) {
+      return getAssetHoldingStats(assetKey).avgPrice;
+    }
+
+    function loadMarketDataFromStorage(targetProfileId = null) {
+      const pid = targetProfileId || getActiveProfileId();
+      try {
+        const rawCash = localStorage.getItem(getProfileDataKey('market_cash', pid));
+        if (rawCash !== null) {
+          marketCash = parseFloat(rawCash);
+        } else {
+          marketCash = 1000;
+          localStorage.setItem(getProfileDataKey('market_cash', pid), '1000.00');
+        }
+        
+        const rawLots = localStorage.getItem(getProfileDataKey('market_buy_lots', pid));
+        if (rawLots) {
+          marketBuyLots = JSON.parse(rawLots);
+        } else {
+          // Backward compatibility migration for older portfolio format
+          const rawHoldings = localStorage.getItem(getProfileDataKey('market_holdings', pid));
+          if (rawHoldings) {
+            const oldHoldings = JSON.parse(rawHoldings);
+            marketBuyLots = [];
+            Object.keys(oldHoldings).forEach(k => {
+              if (oldHoldings[k] && oldHoldings[k].shares > 0) {
+                marketBuyLots.push({
+                  id: 'lot_migrated_' + k,
+                  assetKey: k,
+                  shares: oldHoldings[k].shares,
+                  buyPrice: oldHoldings[k].totalCost / oldHoldings[k].shares,
+                  totalCost: oldHoldings[k].totalCost,
+                  timeStr: 'Migrated Position',
+                  timestamp: Date.now()
+                });
+              }
+            });
+          } else {
+            marketBuyLots = [];
+          }
+        }
+      } catch (e) {
+        marketCash = 1000;
+        marketBuyLots = [];
+      }
+      updateMarketUI();
+      checkAffordability();
+    }
+
+    function saveMarketDataToStorage() {
+      const pid = getActiveProfileId();
+      try {
+        localStorage.setItem(getProfileDataKey('market_cash', pid), marketCash.toFixed(2));
+        localStorage.setItem(getProfileDataKey('market_buy_lots', pid), JSON.stringify(marketBuyLots));
+      } catch (e) {}
+      updateMarketUI();
+    }
+
+    function updateAssetForecast(assetKey) {
+      const asset = ASSETS[assetKey];
+      const fc = ensureAssetForecasts(assetKey);
+      if (!fc) return;
+
+      // 1. Micro-scalp tick
+      fc.short.ticksLeft--;
+      if (fc.short.ticksLeft <= 0) {
+        fc.short = rollShortTermForecast(assetKey);
+      }
+
+      // 2. Swing cycle tick
+      fc.mid.ticksLeft--;
+      if (fc.mid.ticksLeft <= 0) {
+        fc.mid = rollMidTermForecast(assetKey);
+      }
+
+      // 3. Macro trend tick
+      fc.long.ticksLeft--;
+      if (fc.long.ticksLeft <= 0) {
+        fc.long = rollLongTermForecast(assetKey);
+        fc.mid = rollMidTermForecast(assetKey);
+      }
+      asset.forecast = fc.short;
+    }
+
+    function formatTimeDuration(seconds) {
+      if (seconds >= 3600) {
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = seconds % 60;
+        return `${h}h ${m}m ${s}s`;
+      }
+      if (seconds >= 60) {
+        const m = Math.floor(seconds / 60);
+        const s = seconds % 60;
+        return `${m}m ${s}s`;
+      }
+      return `${seconds}s`;
+    }
+
+    function updateOracleUI() {
+      const oracleBar = document.getElementById('marketOracleBar');
+      if (!oracleBar) return;
+
+      const asset = ASSETS[activeAssetKey];
+      const fc = ensureAssetForecasts(activeAssetKey);
+      if (!fc) return;
+
+      const shortIsUp = fc.short.direction === 'UP';
+      const midIsUp = fc.mid.direction === 'UP';
+      const longIsUp = fc.long.direction === 'UP';
+
+      let adviceText = '';
+      let adviceClass = '';
+      if (longIsUp) {
+        adviceClass = 'buy';
+        adviceText = (!shortIsUp || !midIsUp) 
+          ? '🟢 STRATEGY: BUY THE DIP (Bull Trend Active)' 
+          : '🟢 STRATEGY: RIDE BULL MOMENTUM (Strong Trend)';
+      } else {
+        adviceClass = 'sell';
+        adviceText = (shortIsUp || midIsUp) 
+          ? '🔴 STRATEGY: SELL RELIEF BOUNCE (Bear Trend Active)' 
+          : '🔴 STRATEGY: EXIT / SHORT (Downtrend Wave)';
+      }
+
+      const shortPctStr = (shortIsUp ? '+' : '') + Math.abs(fc.short.targetPct).toFixed(1) + '%';
+      const midPctStr = (midIsUp ? '+' : '') + Math.abs(fc.mid.targetPct).toFixed(1) + '%';
+      const longPctStr = (longIsUp ? '+' : '') + Math.abs(fc.long.targetPct).toFixed(1) + '%';
+
+      const shortTimeStr = formatTimeDuration(Math.round(fc.short.ticksLeft * 1.6));
+      const midTimeStr = formatTimeDuration(Math.round(fc.mid.ticksLeft * 1.6));
+      const longTimeStr = formatTimeDuration(Math.round(fc.long.ticksLeft * 1.6));
+
+      oracleBar.innerHTML = `
+        <div style="width:100%; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:4px;">
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <span class="oracle-badge">🔮 100% PREDICTION ENGINE</span>
+            <span style="font-size:0.75rem; color:var(--subtext); font-weight:600;">Multi-Timeframe Forecast (${asset.symbol})</span>
+          </div>
+          <div class="oracle-advice ${adviceClass}" style="margin:0; font-size:0.78rem;">
+            ${adviceText}
+          </div>
+        </div>
+        <div style="width:100%; display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:8px;">
+          <div style="background:rgba(0,0,0,0.32); border:1px solid var(--border); border-left:3.5px solid ${shortIsUp ? '#26a69a' : '#ef5350'}; border-radius:8px; padding:7px 10px; display:flex; flex-direction:column; gap:2px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span style="font-size:0.68rem; font-weight:800; color:var(--subtext); letter-spacing:0.4px;">⚡ SHORT-TERM (SCALP)</span>
+              <span style="font-size:0.70rem; color:var(--subtext); font-family:monospace;">~${shortTimeStr}</span>
+            </div>
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-top:1px;">
+              <span style="font-size:0.86rem; font-weight:800; color:${shortIsUp ? '#26a69a' : '#ef5350'};">
+                ${shortIsUp ? '🚀 PUMP' : '🔻 DIP'} (${shortPctStr})
+              </span>
+              <span style="font-size:0.72rem; color:var(--subtext); font-weight:600;">${shortIsUp ? 'Bouncing' : 'Fluctuating'}</span>
+            </div>
+          </div>
+
+          <div style="background:rgba(0,0,0,0.32); border:1px solid var(--border); border-left:3.5px solid ${midIsUp ? '#26a69a' : '#ef5350'}; border-radius:8px; padding:7px 10px; display:flex; flex-direction:column; gap:2px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span style="font-size:0.68rem; font-weight:800; color:var(--subtext); letter-spacing:0.4px;">⏱️ MID-TERM (SWING)</span>
+              <span style="font-size:0.70rem; color:var(--subtext); font-family:monospace;">~${midTimeStr}</span>
+            </div>
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-top:1px;">
+              <span style="font-size:0.86rem; font-weight:800; color:${midIsUp ? '#26a69a' : '#ef5350'};">
+                ${midIsUp ? '📈 RALLY' : '📉 PULLBACK'} (${midPctStr})
+              </span>
+              <span style="font-size:0.72rem; color:var(--subtext); font-weight:600;">${fc.mid.isPullback ? 'Correction' : 'Trend Wave'}</span>
+            </div>
+          </div>
+
+          <div style="background:rgba(0,0,0,0.32); border:1px solid var(--border); border-left:3.5px solid ${longIsUp ? '#26a69a' : '#ef5350'}; border-radius:8px; padding:7px 10px; display:flex; flex-direction:column; gap:2px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span style="font-size:0.68rem; font-weight:800; color:var(--subtext); letter-spacing:0.4px;">⏳ LONG-TERM (MACRO)</span>
+              <span style="font-size:0.70rem; color:var(--subtext); font-family:monospace;">~${longTimeStr}</span>
+            </div>
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-top:1px;">
+              <span style="font-size:0.86rem; font-weight:800; color:${longIsUp ? '#26a69a' : '#ef5350'};">
+                ${longIsUp ? '💎 SUPER BULL' : '🩸 BEAR CYCLE'} (${longPctStr})
+              </span>
+              <span style="font-size:0.72rem; color:var(--subtext); font-weight:600;">Anchor Trend</span>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // REGISTERS & RENDERS EACH INDIVIDUAL BUY ORDER INPUT
+    function renderHoldingsList() {
+      const listEl = document.getElementById('holdingsList');
+      const countPill = document.getElementById('holdingsCountPill');
+      if (!listEl) return;
+      listEl.innerHTML = '';
+
+      if (countPill) {
+        countPill.textContent = `${marketBuyLots.length} lot${marketBuyLots.length === 1 ? '' : 's'}`;
+      }
+
+      if (!marketBuyLots.length) {
+        listEl.innerHTML = `<div style="text-align:center; padding: 18px 8px; color:var(--subtext); font-size:0.76rem;">No stock purchases registered yet. Enter shares and click BUY!</div>`;
+        return;
+      }
+
+      marketBuyLots.forEach((lot, idx) => {
+        const asset = ASSETS[lot.assetKey] || ASSETS.BOORU;
+        const currPrice = getCurrentPrice(lot.assetKey);
+        const currentVal = lot.shares * currPrice;
+        const pnlDiff = currentVal - lot.totalCost;
+        const pnlPct = lot.totalCost > 0 ? ((pnlDiff / lot.totalCost) * 100) : 0;
+        const isProfit = pnlDiff >= 0;
+
+        const row = document.createElement('div');
+        row.className = `holding-lot-row ${isProfit ? 'profit' : 'loss'}`;
+        row.innerHTML = `
+          <div class="holding-item-info">
+            <div class="holding-item-symbol">
+              <span style="color:${asset.color};">${asset.symbol}</span>
+              <span style="color:#fff; font-size:0.8rem;">${lot.shares.toLocaleString()} shs</span>
+              <span style="font-size:0.75rem; font-weight:700; color:${isProfit ? '#26a69a' : '#ef5350'};">
+                ${isProfit ? '+' : ''}${pnlDiff.toFixed(1)} CR (${isProfit ? '+' : ''}${pnlPct.toFixed(1)}%)
+              </span>
+            </div>
+            <div class="holding-item-sub">
+              Lot #${marketBuyLots.length - idx} • Bought @ ${lot.buyPrice.toFixed(2)} | Current: ${currPrice.toFixed(2)} (${lot.timeStr || 'Recent'})
+            </div>
+          </div>
+          <div class="holding-item-actions">
+            <button type="button" class="holding-sell-btn" title="Sell this individual purchase lot" data-sell-lot="${lot.id}">SELL</button>
+          </div>
+        `;
+
+        row.querySelector(`[data-sell-lot="${lot.id}"]`).addEventListener('click', (e) => {
+          e.stopPropagation();
+          sellSingleBuyLot(lot.id);
+        });
+
+        row.addEventListener('click', () => {
+          switchActiveMarketAsset(lot.assetKey);
+        });
+
+        listEl.appendChild(row);
+      });
+    }
+
+    function updateMarketUI() {
+      if (navWalletCreditsBadge) navWalletCreditsBadge.textContent = `${Math.floor(marketCash).toLocaleString()} CR`;
+      if (marketCashLabel) marketCashLabel.textContent = `${marketCash.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CR`;
+
+      const currPrice = getCurrentPrice(activeAssetKey);
+      const activeStats = getAssetHoldingStats(activeAssetKey);
+
+      if (marketHoldingsLabel) marketHoldingsLabel.textContent = `${activeStats.totalShares.toLocaleString()} shares (${activeStats.lotsCount} lots)`;
+      if (marketAvgCostLabel) marketAvgCostLabel.textContent = activeStats.avgPrice > 0 ? activeStats.avgPrice.toFixed(2) : '0.00';
+
+      if (marketPnlLabel) {
+        if (activeStats.totalShares > 0) {
+          const val = activeStats.totalShares * currPrice;
+          const diff = val - activeStats.totalCost;
+          const pct = ((diff / activeStats.totalCost) * 100);
+          marketPnlLabel.textContent = `${diff >= 0 ? '+' : ''}${diff.toFixed(2)} (${diff >= 0 ? '+' : ''}${pct.toFixed(1)}%)`;
+          marketPnlLabel.style.color = diff >= 0 ? '#26a69a' : '#ef5350';
+        } else {
+          marketPnlLabel.textContent = '0.00 (0.0%)';
+          marketPnlLabel.style.color = 'var(--subtext)';
+        }
+      }
+
+      if (chartSymbolLabel) chartSymbolLabel.textContent = ASSETS[activeAssetKey].symbol;
+      if (chartPriceLabel) {
+        chartPriceLabel.textContent = currPrice.toFixed(2);
+        const candle = marketCandles[activeAssetKey][marketCandles[activeAssetKey].length - 1];
+        chartPriceLabel.className = `market-asset-price ${candle && candle.close < candle.open ? 'down' : ''}`;
+      }
+
+      const firstCandle = marketCandles[activeAssetKey][0];
+      if (chartChangeLabel && firstCandle) {
+        const netDiff = currPrice - firstCandle.open;
+        const netPct = (netDiff / firstCandle.open) * 100;
+        chartChangeLabel.textContent = `${netDiff >= 0 ? '+' : ''}${netPct.toFixed(1)}%`;
+        chartChangeLabel.className = `market-asset-chg ${netDiff >= 0 ? 'up' : 'down'}`;
+      }
+
+      updateOracleUI();
+      renderHoldingsList();
+    }
+
+    function switchActiveMarketAsset(assetKey) {
+      if (!ASSETS[assetKey]) return;
+      activeAssetKey = assetKey;
+      ['btnAssetBooru', 'btnAssetPix', 'btnAssetGacha'].forEach(id => {
+        const b = document.getElementById(id);
+        if (b) {
+          b.style.borderColor = 'var(--border)';
+          b.style.color = 'var(--subtext)';
+        }
+      });
+      const activeBtn = document.getElementById(`btnAsset${assetKey === 'BOORU' ? 'Booru' : (assetKey === 'PIX' ? 'Pix' : 'Gacha')}`);
+      if (activeBtn) {
+        activeBtn.style.borderColor = 'var(--accent)';
+        activeBtn.style.color = 'var(--text-bold)';
+      }
+      updateMarketUI();
+      drawCandleChart();
+    }
+
+    function drawCandleChart() {
+      if (!marketCanvas || !marketCanvas.parentElement) return;
+      const ctx = marketCanvas.getContext('2d');
+      const w = marketCanvas.parentElement.clientWidth;
+      const h = marketCanvas.parentElement.clientHeight;
+
+      const dpr = window.devicePixelRatio || 1;
+      marketCanvas.width = w * dpr;
+      marketCanvas.height = h * dpr;
+      ctx.scale(dpr, dpr);
+
+      ctx.fillStyle = '#131722';
+      ctx.fillRect(0, 0, w, h);
+
+      const candles = marketCandles[activeAssetKey] || [];
+      if (candles.length < 2) return;
+
+      const rightMargin = 65;
+      const chartWidth = w - rightMargin;
+      const paddingY = 24;
+
+      let minP = Infinity;
+      let maxP = -Infinity;
+      candles.forEach(c => {
+        if (c.low < minP) minP = c.low;
+        if (c.high > maxP) maxP = c.high;
+      });
+
+      const avgBuyPrice = getHoldingAvgCost(activeAssetKey);
+      if (avgBuyPrice > 0) {
+        minP = Math.min(minP, avgBuyPrice * 0.96);
+        maxP = Math.max(maxP, avgBuyPrice * 1.04);
+      }
+
+      minP *= 0.97;
+      maxP *= 1.03;
+      const priceRange = Math.max(0.001, maxP - minP);
+
+      const getY = (p) => h - paddingY - ((p - minP) / priceRange) * (h - paddingY * 2);
+
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.lineWidth = 1;
+      ctx.fillStyle = '#787b86';
+      ctx.font = '10px monospace';
+      ctx.textAlign = 'left';
+
+      const steps = 5;
+      for (let i = 0; i <= steps; i++) {
+        const p = minP + (priceRange / steps) * i;
+        const y = getY(p);
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(chartWidth, y);
+        ctx.stroke();
+        ctx.fillText(p.toFixed(2), chartWidth + 8, y + 3);
+      }
+
+      const n = candles.length;
+      const colWidth = chartWidth / n;
+      const candleWidth = Math.max(3, colWidth * 0.65);
+
+      candles.forEach((c, idx) => {
+        const x = idx * colWidth + colWidth / 2;
+        const openY = getY(c.open);
+        const closeY = getY(c.close);
+        const highY = getY(c.high);
+        const lowY = getY(c.low);
+        const isUp = c.close >= c.open;
+        const candleColor = isUp ? '#26a69a' : '#ef5350';
+
+        ctx.strokeStyle = candleColor;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(x, highY);
+        ctx.lineTo(x, lowY);
+        ctx.stroke();
+
+        ctx.fillStyle = candleColor;
+        const topY = Math.min(openY, closeY);
+        const bodyHeight = Math.max(2, Math.abs(openY - closeY));
+        ctx.fillRect(x - candleWidth / 2, topY, candleWidth, bodyHeight);
+      });
+
+      if (avgBuyPrice > 0) {
+        const buyY = getY(avgBuyPrice);
+        ctx.strokeStyle = '#fbc02d';
+        ctx.lineWidth = 1.8;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.moveTo(0, buyY);
+        ctx.lineTo(chartWidth, buyY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.fillStyle = '#fbc02d';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillText('Purchase price', 14, buyY - 8);
+        ctx.font = 'bold 12px monospace';
+        ctx.fillText(avgBuyPrice.toFixed(2), 14, buyY + 14);
+      }
+    }
+
+    // ===================================================
+    // TICKER ENGINE: REALISTIC WAVES & CANDLE DYNAMICS
+    // ===================================================
+    // TICKER ENGINE: REALISTIC WAVES, PULLBACKS & PROTECTED CYCLE
+    function startMarketTicker() {
+      if (marketTickerTimer) clearInterval(marketTickerTimer);
+      marketTickerTimer = setInterval(() => {
+        try {
+          Object.keys(ASSETS).forEach(k => {
+            const asset = ASSETS[k];
+            const list = marketCandles[k];
+            if (!list || !list.length) return;
+            let curr = list[list.length - 1];
+
+            updateAssetForecast(k);
+            const fc = ensureAssetForecasts(k);
+            if (!fc) return;
+
+            // 1. Probabilistic green/red candle generation based on multi-timeframe bias
+            const isMacroBull = fc.long.direction === 'UP';
+            const isSwingBull = fc.mid.direction === 'UP';
+            const isScalpBull = fc.short.direction === 'UP';
+
+            let bullProb = 0.50;
+            bullProb += isMacroBull ? 0.11 : -0.11;
+            bullProb += isSwingBull ? 0.07 : -0.07;
+            bullProb += isScalpBull ? 0.05 : -0.05;
+
+            const isUpTick = Math.random() < bullProb;
+
+            // 2. Realistic price changes (healthy retracements instead of continuous 45-degree steps)
+            const macroStep = Math.abs(fc.long.stepFactor - 1);
+            const noise = (Math.random() * 0.016 + 0.003) * (asset.jitter * 40);
+            const tickPct = isUpTick ? (macroStep * 1.5 + noise) : -(macroStep * 1.2 + noise);
+
+            const targetPrice = Math.max(asset.minPrice, curr.close * (1 + tickPct));
+            curr.close = targetPrice;
+
+            // 3. Proportional wicks tied directly to candle body size (removes needle wicks)
+            const bodyRange = Math.abs(curr.close - curr.open);
+            const wickLimit = Math.max(bodyRange * 0.5, curr.close * asset.wickScale * 0.28);
+            const upperTail = (Math.random() * 0.7 + 0.15) * wickLimit;
+            const lowerTail = (Math.random() * 0.7 + 0.15) * wickLimit;
+
+            curr.high = Math.max(curr.high, Math.max(curr.open, curr.close) + upperTail);
+            curr.low = Math.min(curr.low, Math.max(asset.minPrice, Math.min(curr.open, curr.close) - lowerTail));
+
+            // 4. Candle lifecycle & rollover
+            if (Math.random() < asset.candleSpeed) {
+              const nextOpen = curr.close;
+              const starterWick = nextOpen * asset.wickScale * 0.15;
+              list.push({
+                open: nextOpen,
+                close: nextOpen,
+                high: nextOpen + (Math.random() * starterWick),
+                low: Math.max(asset.minPrice, nextOpen - (Math.random() * starterWick))
+              });
+              if (list.length > 36) list.shift();
+            }
+          });
+
+          updateMarketUI();
+          if (marketView && marketView.style.display !== 'none') {
+            drawCandleChart();
+          }
+        } catch (e) {
+          console.error("Market ticker loop error:", e);
+        }
+      }, 1600);
+    }
+
+    function setTradePercent(pct) {
+      const currPrice = getCurrentPrice(activeAssetKey);
+      if (!currPrice) return;
+      const maxShares = Math.floor(marketCash / currPrice);
+      const target = Math.floor((maxShares * pct) / 100);
+      if (tradeSharesInput) tradeSharesInput.value = Math.max(1, target);
+    }
+
+    // REGISTERS AN INDIVIDUAL BUY ORDER LOT
+    function executeBuyOrder() {
+      const shares = parseInt(tradeSharesInput.value) || 0;
+      if (shares <= 0) {
+        showToast('Please enter a valid amount of shares', 'warn');
+        return;
+      }
+      const price = getCurrentPrice(activeAssetKey);
+      const total = shares * price;
+
+      if (marketCash < total) {
+        showToast('Insufficient cash to place this order', 'error', '⚠️');
+        return;
+      }
+
+      marketCash -= total;
+
+      const newLot = {
+        id: 'lot_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        assetKey: activeAssetKey,
+        shares: shares,
+        buyPrice: price,
+        totalCost: total,
+        timeStr: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        timestamp: Date.now()
+      };
+
+      marketBuyLots.unshift(newLot);
+
+      saveMarketDataToStorage();
+      checkAffordability();
+      recordActionLog('storage', `Bought ${shares}x ${activeAssetKey} @ ${price.toFixed(2)} CR (Lot registered)`);
+      showToast(`Registered buy: ${shares}x ${activeAssetKey} @ ${price.toFixed(2)} CR`, 'success', '📈');
+      updateMarketUI();
+      drawCandleChart();
+    }
+
+    // LIQUIDATE A SPECIFIC BUY ORDER LOT
+    function sellSingleBuyLot(lotId) {
+      const lotIndex = marketBuyLots.findIndex(l => l.id === lotId);
+      if (lotIndex === -1) return;
+
+      const lot = marketBuyLots[lotIndex];
+      const currPrice = getCurrentPrice(lot.assetKey);
+      const proceeds = lot.shares * currPrice;
+      const pnl = proceeds - lot.totalCost;
+
+      marketCash += proceeds;
+      marketBuyLots.splice(lotIndex, 1);
+
+      saveMarketDataToStorage();
+      checkAffordability();
+      recordActionLog('storage', `Sold Lot (${lot.shares}x ${lot.assetKey}) for +${proceeds.toFixed(2)} CR (P/L: ${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} CR)`);
+      showToast(`Liquidated lot: +${proceeds.toFixed(2)} CR`, 'info', '💰');
+      updateMarketUI();
+      drawCandleChart();
+    }
+
+    // LIQUIDATE ALL LOTS IN PORTFOLIO
+    function sellAllPortfolioPositions() {
+      if (!marketBuyLots.length) {
+        showToast('No active positions to liquidate', 'info');
+        return;
+      }
+
+      let totalProceeds = 0;
+      let totalShares = 0;
+
+      marketBuyLots.forEach(lot => {
+        const price = getCurrentPrice(lot.assetKey);
+        totalProceeds += lot.shares * price;
+        totalShares += lot.shares;
+      });
+
+      const count = marketBuyLots.length;
+      marketBuyLots = [];
+      marketCash += totalProceeds;
+
+      saveMarketDataToStorage();
+      checkAffordability();
+      recordActionLog('storage', `Liquidated all ${count} lots (${totalShares} shares) for +${totalProceeds.toFixed(2)} CR`);
+      showToast(`Sold all ${count} lots (+${totalProceeds.toFixed(2)} CR)!`, 'success', '💰');
+      updateMarketUI();
+      drawCandleChart();
+    }
+
+    document.getElementById('btnBuyMarket')?.addEventListener('click', executeBuyOrder);
+    document.getElementById('btnSellAllPortfolio')?.addEventListener('click', sellAllPortfolioPositions);
+
+    // ===================================================
+    // CARD VALUE ARCHITECTURE & SCRAP LOGIC
+    // ===================================================
+    function getCardScrapValue(card) {
+      if (!card) return 0;
+      const raw = (card.gachaRarity || card.rarity || 'C').toUpperCase();
+      let base = 25;
+      if (raw === 'SSR') base = 1000;
+      else if (raw === 'SR') base = 250;
+      else if (raw === 'R') base = 75;
+      else base = 25;
+
+      if (card.variant === 'rainbow') base *= 2;
+      return base;
+    }
+
+    function updateDailyStipendUI() {
+      if (!dailyLoginClaimBtn) return;
+      const pid = getActiveProfileId();
+      const lastClaim = parseInt(localStorage.getItem(getProfileDataKey('last_daily_claim', pid)) || '0');
+      const now = Date.now();
+      const oneDay = 24 * 60 * 60 * 1000;
+      const elapsed = now - lastClaim;
+
+      if (elapsed < oneDay) {
+        const remainingMs = oneDay - elapsed;
+        const remainingHours = Math.floor(remainingMs / (1000 * 60 * 60));
+        const remainingMins = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
+
+        dailyLoginClaimBtn.disabled = true;
+        dailyLoginClaimBtn.classList.add('claimed-disabled');
+        dailyLoginClaimBtn.textContent = `⏳ Claimed (Wait ${remainingHours}h ${remainingMins}m)`;
+      } else {
+        dailyLoginClaimBtn.disabled = false;
+        dailyLoginClaimBtn.classList.remove('claimed-disabled');
+        dailyLoginClaimBtn.textContent = `🎁 Claim Daily Stipend (+1,000 CR)`;
+      }
+    }
+
+    dailyLoginClaimBtn?.addEventListener('click', () => {
+      const pid = getActiveProfileId();
+      const lastClaim = parseInt(localStorage.getItem(getProfileDataKey('last_daily_claim', pid)) || '0');
+      const now = Date.now();
+      const oneDay = 24 * 60 * 60 * 1000;
+
+      if (now - lastClaim < oneDay) {
+        updateDailyStipendUI();
+        showToast('Daily stipend already claimed! Check timer.', 'warn');
+        return;
+      }
+
+      marketCash += 1000;
+      localStorage.setItem(getProfileDataKey('last_daily_claim', pid), now);
+      saveMarketDataToStorage();
+      updateDailyStipendUI();
+      recordActionLog('storage', 'Claimed Daily Stipend (+1,000 CR)');
+      showToast('Claimed +1,000 Credits!', 'success', '🎁');
+    });
+
+    // OVERRIDE TAB SWITCHER TO RECOGNIZE MARKET TAB
+    if (tabMarket) {
+      tabMarket.addEventListener('click', () => {
+        activateTab(tabMarket, marketView);
+        updateMarketUI();
+        updateDailyStipendUI();
+        setTimeout(drawCandleChart, 40);
+      });
+    }
+
+    function checkAffordability() {
+      if (gachaRoll1Btn) {
+        gachaRoll1Btn.classList.toggle('insufficient', marketCash < 100);
+      }
+      if (gachaRoll10Btn) {
+        gachaRoll10Btn.classList.toggle('insufficient', marketCash < 900);
+      }
+    }
+
+    const originalExecuteGachaSummon = executeGachaSummon;
+    executeGachaSummon = async function(count = 1) {
+      const cost = count === 1 ? 100 : 900;
+      if (marketCash < cost) {
+        await showCustomAlert(
+          `Insufficient credits! You need <strong>${cost} CR</strong> to summon, but currently have <strong>${Math.floor(marketCash).toLocaleString()} CR</strong>.<br><br>Trade on the Market, claim your daily stipend, or scrap duplicate cards!`,
+          'Insufficient Currency',
+          'warn'
+        );
+        return;
+      }
+
+      marketCash -= cost;
+      saveMarketDataToStorage();
+      checkAffordability();
+      originalExecuteGachaSummon(count);
+    };
+
+    const pokemonSellCardBtn = document.getElementById('pokemonSellCardBtn');
+    const pokemonSellPriceLabel = document.getElementById('pokemonSellPriceLabel');
+
+    pokemonSellCardBtn?.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!activePokemonItem) return;
+
+      const card = activePokemonItem;
+      const val = getCardScrapValue(card);
+      const tier = getRarityBadgeText(card.gachaRarity || card.rarity);
+      const isShiny = card.variant === 'rainbow';
+
+      const ok = await showCustomConfirm(
+        `Scrap this <strong>${isShiny ? '✨ Shiny ' : ''}${tier}-Tier</strong> card for <strong>+${val} CR</strong>?`,
+        'Scrap Card for Credits'
+      );
+      if (!ok) return;
+
+      const cardSummonId = card.summonId || (card.postId + '_' + card.summonedAt);
+      gachaSummonHistory = gachaSummonHistory.filter(c => {
+        const sid = c.summonId || (c.postId + '_' + c.summonedAt);
+        return sid !== cardSummonId;
+      });
+
+      unlockedGachaSet = new Set(gachaSummonHistory.map(i => i.id || i.postId));
+
+      marketCash += val;
+      saveMarketDataToStorage();
+      saveGachaStateToStorage(false);
+      checkAffordability();
+      updateGachaStats();
+      renderGachaResults();
+      closePokemonCard();
+
+      recordActionLog('storage', `Scrapped ${tier} card for +${val} CR`);
+      showToast(`Scrapped card for +${val} CR!`, 'success', '💰');
+    });
+
+    const originalUpdateGachaSelectionVisuals = updateGachaSelectionVisuals;
+    updateGachaSelectionVisuals = function() {
+      originalUpdateGachaSelectionVisuals();
+      if (gachaView && gachaView.style.display !== 'none' && isGachaSelectionMode) {
+        let totalVal = 0;
+        const sel = new Set(selectedGachaSet);
+        gachaSummonHistory.forEach(item => {
+          const sid = item.summonId || (item.postId + '_' + item.summonedAt);
+          if (sel.has(sid)) {
+            totalVal += getCardScrapValue(item);
+          }
+        });
+
+        if (selectedGachaSet.size > 0) {
+          batchDeleteBtn.innerHTML = `💰 Scrap (${selectedGachaSet.size}) [+${totalVal.toLocaleString()} CR]`;
+          batchDeleteBtn.style.background = '#238636';
+          batchDeleteBtn.style.borderColor = '#2ea043';
+        } else {
+          batchDeleteBtn.textContent = '🗑️ Scrap Selected';
+          batchDeleteBtn.style.background = '';
+          batchDeleteBtn.style.borderColor = '';
+        }
+      }
+    };
+
+    const originalRemoveGacha = removeSelectedGachaCards;
+    removeSelectedGachaCards = async function() {
+      if (!selectedGachaSet.size) return;
+      const count = selectedGachaSet.size;
+
+      let scrapValue = 0;
+      const removeIds = new Set(selectedGachaSet);
+      gachaSummonHistory.forEach(item => {
+        const sid = item.summonId || (item.postId + '_' + item.summonedAt);
+        if (removeIds.has(sid)) {
+          scrapValue += getCardScrapValue(item);
+        }
+      });
+
+      const ok = await showCustomConfirm(
+        `Scrap <strong>${count}</strong> card${count > 1 ? 's' : ''} for <strong>+${scrapValue.toLocaleString()} Credits</strong>?`,
+        'Scrap Cards for Credits'
+      );
+      if (!ok) return;
+
+      marketCash += scrapValue;
+      saveMarketDataToStorage();
+      checkAffordability();
+      await originalRemoveGacha();
+      showToast(`Scrapped ${count} cards for +${scrapValue.toLocaleString()} CR!`, 'success', '💰');
+    };
+
+    // ===================================================
+    // INITIALIZATION ROUTINE
     // ===================================================
     window.addEventListener('DOMContentLoaded', async () => {
-      initCustomDropdowns();
-      setupProfileFileInput();
       updateColZoomUI();
       updateGachaColZoomUI();
+      initCustomDropdowns();
+      setupProfileFileInput();
       updateProfileUI();
       await loadProfileData();
+      loadMarketDataFromStorage();
+      startMarketTicker();
+      updateDailyStipendUI();
+      checkAffordability();
+      setInterval(updateDailyStipendUI, 30000); // Live countdown updater
+      window.addEventListener('resize', () => { if (marketView.style.display !== 'none') drawCandleChart(); });
     });

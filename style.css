@@ -1,4 +1,4 @@
-   :root {
+:root {
       --bg: #0d1117;
       --card-bg: #161b22;
       --border: #30363d;
@@ -224,7 +224,6 @@
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       min-height: 100vh;
       overflow-x: hidden;
-      transition: background 0.2s ease, color 0.2s ease;
     }
 
     body.hide-page-badge .page-pill { display: none !important; }
@@ -244,32 +243,40 @@
       border-color: var(--card-hover-border) !important;
     }
 
-    /* FLUID CARD TRANSITIONS AND LAYOUT RE-ORDER ANIMATION */
-    .media-item,
-    .post-card,
-    .gacha-card {
-      animation: cardEntranceFade 0.24s cubic-bezier(0.16, 1, 0.3, 1) both;
-      transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
-      will-change: transform, opacity;
+    #galleryView .card-rarity-pill,
+    #collectionsView .card-rarity-pill,
+    #collectionGalleryGrid .card-rarity-pill {
+      display: none !important;
+    }
+    
+    #galleryView .media-item[class*="gacha-revealed-"],
+    #galleryView .post-card[class*="gacha-revealed-"],
+    #collectionsView .media-item[class*="gacha-revealed-"],
+    #collectionsView .post-card[class*="gacha-revealed-"] {
+      border-color: var(--border) !important;
+      box-shadow: none !important;
+    }
+    
+    #galleryView .media-item[class*="gacha-revealed-"]:hover,
+    #collectionsView .media-item[class*="gacha-revealed-"]:hover {
+      border-color: var(--accent) !important;
+    }
+    
+    #galleryView .post-card[class*="gacha-revealed-"]:hover,
+    #collectionsView .post-card[class*="gacha-revealed-"]:hover {
+      border-color: var(--card-hover-border) !important;
     }
 
-    @keyframes cardEntranceFade {
-      0% {
-        opacity: 0;
-        transform: scale(0.96) translateY(10px);
-      }
-      100% {
-        opacity: 1;
-        transform: scale(1) translateY(0);
-      }
+    /* REMOVE STUCK ANIMATIONS & TRANSITIONS ON ALL BROWSING GRIDS */
+    #galleryView:not(.animating),
+    #collectionsView:not(.animating) {
+      animation: none !important;
     }
 
-    .gallery-column,
     .gacha-masonry-col {
       transition: flex 0.28s cubic-bezier(0.16, 1, 0.3, 1), width 0.28s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
-    .gallery-container,
     .gacha-results-grid {
       transition: all 0.28s ease;
     }
@@ -413,13 +420,11 @@
     }
     body.selection-mode-active .post-card .post-header {
       padding-left: 28px;
-      transition: padding-left 0.15s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     .card-selected-highlight {
       border-color: var(--accent) !important;
       box-shadow: 0 0 14px rgba(88, 166, 255, 0.45) !important;
-      transform: translateY(-2px);
     }
 
     .batch-action-bar {
@@ -438,6 +443,8 @@
       z-index: 2200;
       align-items: center;
       gap: 8px;
+      max-width: calc(100vw - 24px); /* <-- Prevents viewport overflow */
+      box-sizing: border-box;
     }
     .batch-action-bar.visible { display: flex; animation: slideUpBatch 0.2s cubic-bezier(0.16, 1, 0.3, 1); }
     @keyframes slideUpBatch {
@@ -460,7 +467,7 @@
       transition: all 0.15s;
       white-space: nowrap;
     }
-    .batch-btn:hover { border-color: var(--accent); transform: translateY(-1px); }
+    .batch-btn:hover { border-color: var(--accent); }
     .batch-btn.danger:hover { background: #da3633; color: #fff; border-color: #da3633; }
     .batch-btn.cancel { background: transparent; border: none; color: var(--subtext); }
     .batch-btn.cancel:hover { color: var(--text-bold); }
@@ -508,6 +515,7 @@
       flex-shrink: 0;
     }
     #loadedCountBadge {
+      display: none;
       background: var(--btn-bg);
       border: 1px solid var(--border);
       color: var(--text-bold);
@@ -515,7 +523,6 @@
       font-weight: 500;
       padding: 2px 8px;
       border-radius: 6px;
-      transition: border-color 0.2s, color 0.2s;
       white-space: nowrap;
     }
     .count {
@@ -538,7 +545,7 @@
       gap: 6px;
     }
 
-    /* BRAND / COPYRIGHT & DISCORD BADGE */
+    /* BRAND / COPYRIGHT BADGE */
     .brand-id-badge {
       display: inline-flex;
       align-items: center;
@@ -820,6 +827,7 @@
       min-width: 0;
     }
 
+    /* CARDS IN GALLERY & COLLECTION: FIXED TRANSPARENT BACKGROUNDS & NO WILL-CHANGE */
     .media-item {
       background: var(--card-bg);
       border-radius: 8px;
@@ -836,7 +844,7 @@
       height: auto;
       max-width: 100%;
       display: block;
-      background: #000;
+      background: transparent;
       object-fit: contain;
     }
 
@@ -1035,7 +1043,7 @@
       border-radius: 8px;
       overflow: hidden;
       cursor: pointer;
-      background: #000;
+      background: transparent;
       border: 1px solid var(--border);
     }
     .post-media-wrap img {
@@ -1043,6 +1051,7 @@
       height: auto;
       max-width: 100%;
       display: block;
+      background: transparent;
       object-fit: contain;
     }
 
@@ -1055,121 +1064,8 @@
       font-size: 0.75rem;
       color: var(--subtext);
     }
-    .post-footer-actions {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
 
-    .post-icon-btn {
-      width: 32px;
-      height: 32px;
-      background: #121824;
-      border: 1px solid #28354b;
-      border-radius: 8px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--accent-cyan);
-      cursor: pointer;
-      text-decoration: none;
-      transition: all 0.16s ease;
-      position: relative;
-      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.45);
-    }
-    .post-icon-btn:hover {
-      background: #1a2334;
-      border-color: var(--accent-cyan);
-      color: #ffffff;
-      transform: translateY(-1.5px);
-      box-shadow: 0 4px 12px rgba(34, 211, 238, 0.35);
-    }
-    .post-icon-btn svg {
-      width: 16px;
-      height: 16px;
-      stroke-width: 2.2;
-    }
-
-    body.light-theme .post-icon-btn {
-      background: #eef3f9;
-      border-color: #cbd5e1;
-      color: #0284c7;
-    }
-    body.light-theme .post-icon-btn:hover {
-      background: #e0f2fe;
-      border-color: #0284c7;
-      color: #0284c7;
-    }
-
-    /* QUICK FOCUS EXPAND OVERLAY */
-    .focus-blur-overlay {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(3, 7, 18, 0.85);
-      backdrop-filter: blur(18px);
-      -webkit-backdrop-filter: blur(18px);
-      z-index: 5000;
-      justify-content: center;
-      align-items: center;
-      padding: 1.5rem;
-      user-select: none;
-      cursor: zoom-out;
-      animation: focusFadeIn 0.16s ease-out;
-    }
-    .focus-blur-overlay.open { display: flex; }
-    @keyframes focusFadeIn {
-      from { opacity: 0; }
-      to { opacity: 1; }
-    }
-    .focus-blur-container {
-      position: relative;
-      max-width: 95vw;
-      max-height: 94vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      cursor: default;
-    }
-    .focus-blur-img {
-      max-width: 92vw;
-      max-height: 90vh;
-      object-fit: contain;
-      border-radius: 12px;
-      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.95), 0 0 25px rgba(34, 211, 238, 0.25);
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      animation: focusImgPop 0.18s cubic-bezier(0.16, 1, 0.3, 1);
-    }
-    @keyframes focusImgPop {
-      from { transform: scale(0.92); opacity: 0.5; }
-      to { transform: scale(1); opacity: 1; }
-    }
-    .focus-blur-close-btn {
-      position: absolute;
-      top: -14px;
-      right: -14px;
-      background: #da3633;
-      color: #ffffff;
-      width: 32px;
-      height: 32px;
-      border-radius: 50%;
-      border: 2px solid #ffffff;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 1.2rem;
-      font-weight: 700;
-      cursor: pointer;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.6);
-      line-height: 1;
-      z-index: 10;
-      transition: transform 0.15s ease;
-    }
-    .focus-blur-close-btn:hover {
-      transform: scale(1.12);
-    }
-
-    /* COLLECTIONS STYLING */
+    /* COLLECTIONS SHELF STYLING */
     .collections-shelf {
       display: flex;
       gap: 12px;
@@ -1184,13 +1080,12 @@
       padding: 12px 16px;
       cursor: pointer;
       min-width: 170px;
-      transition: all 0.16s ease;
       display: flex;
       flex-direction: column;
       gap: 4px;
       user-select: none;
     }
-    .col-card-chip:hover { border-color: var(--accent); transform: translateY(-2px); }
+    .col-card-chip:hover { border-color: var(--accent); }
     .col-card-chip.active {
       border-color: var(--accent);
       background: rgba(88, 166, 255, 0.12);
@@ -1393,7 +1288,7 @@
     .banner-desc { font-size: 0.74rem; color: rgba(255, 255, 255, 0.75); line-height: 1.35; min-height: 2.7em; }
     .banner-footer { display: flex; align-items: center; gap: 5px; font-size: 0.76rem; font-weight: 700; color: #ffffff; margin-top: 4px; }
 
-    /* LIGHT THEME VIBRANT & CRISP GACHA BANNER STYLES */
+    /* LIGHT THEME GACHA BANNER STYLES */
     body.light-theme .gacha-banner-card {
       box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
       border-width: 2px;
@@ -1610,28 +1505,41 @@
     .gacha-card-badge.r { background: var(--rarity-r-badge-bg); color: var(--rarity-r-badge-text); border: 1px solid var(--rarity-r); }
     .gacha-card-badge.n { background: var(--rarity-n-badge-bg); color: var(--rarity-n-badge-text); border: 1px solid var(--rarity-n); }
 
+    /* Grid Mode Thumbnails (Default: 1:1 Square) */
     .gacha-card-thumb {
       width: 100%;
       aspect-ratio: 1 / 1;
-      background: #000;
+      background: var(--card-bg);
       overflow: hidden;
       position: relative;
-    }
-    .gacha-results-grid.masonry-mode .gacha-card-thumb {
-      aspect-ratio: unset;
     }
     .gacha-card-thumb img {
       width: 100%;
       height: 100%;
       object-fit: cover;
       display: block;
+      background: transparent;
+    }
+
+    /* Masonry Mode (Directly Mirrors Gallery Tab's .media-item) */
+    .gacha-results-grid.masonry-mode .gacha-card {
+      display: block;
+    }
+    .gacha-results-grid.masonry-mode .gacha-card-thumb {
+      width: 100%;
+      aspect-ratio: auto !important;
+      height: auto !important;
+      background: var(--card-bg);
+      overflow: hidden;
+      position: relative;
     }
     .gacha-results-grid.masonry-mode .gacha-card-thumb img {
-      height: auto;
-      object-fit: contain;
-    }
-    .gacha-card-body {
-      display: none !important;
+      width: 100%;
+      height: auto !important;
+      max-width: 100%;
+      display: block;
+      object-fit: contain !important;
+      background: transparent;
     }
 
     /* FULLSCREEN GACHA SUMMON OVERLAY */
@@ -1806,13 +1714,6 @@
     }
     .summon-skip-btn:hover { background: rgba(255, 255, 255, 0.3); border-color: #fff; transform: translateY(-1px); }
 
-    /* NO FLASH LIGHT LAYER */
-    .summon-flash-layer {
-      display: none !important;
-      opacity: 0 !important;
-      pointer-events: none !important;
-    }
-
     /* GACHA CARD INSPECTION VIEW MODE STAGE */
     #summonStageInspect {
       display: none;
@@ -1882,7 +1783,7 @@
       width: auto;
       height: auto;
       object-fit: contain;
-      background: #000;
+      background: transparent;
       border-radius: calc(20px - 7px);
       pointer-events: none;
       transition: opacity 0.2s ease, filter 0.2s ease;
@@ -1947,6 +1848,74 @@
     .pokemon-card-top-pill.r   { --rarity-color: var(--rarity-r); }
     .pokemon-card-top-pill.n   { --rarity-color: var(--rarity-n); }
 
+    /* ===================================================
+    COSMETIC CARD VARIANTS & FOIL SHADERS
+    =================================================== */
+    .card-variant-badge {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      font-size: 0.62rem;
+      font-weight: 900;
+      padding: 2px 6px;
+      border-radius: 4px;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      z-index: 16;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.7);
+      pointer-events: none;
+      user-select: none;
+    }
+
+    /* RAINBOW (SHINY) VARIANT */
+    @property --rainbow-angle {
+      syntax: '<angle>';
+      initial-value: 0deg;
+      inherits: false;
+    }
+
+    @keyframes rainbowBorderSpin {
+      to {
+        --rainbow-angle: 360deg;
+      }
+    }
+    .variant-rainbow {
+      border: 3px solid transparent !important;
+      background: 
+        linear-gradient(#080b11, #080b11) padding-box,
+        conic-gradient(
+          from var(--rainbow-angle),
+          #ff0000, #ff7f00, #ffff00, #00ff00, #00f5ff, #0000ff, #a855f7, #ff007f, #ff0000
+        ) border-box !important;
+      box-shadow: 0 0 30px rgba(255, 255, 255, 0.4), 0 0 55px rgba(255, 105, 180, 0.3) !important;
+      animation: rainbowBorderSpin 3.5s linear infinite !important;
+    }
+    .variant-rainbow .pokemon-card-holo {
+      opacity: 0.65 !important;
+      mix-blend-mode: color-dodge !important;
+      background: linear-gradient(
+        var(--holo-angle, 135deg),
+        transparent 0%,
+        transparent 36%,
+        rgba(255, 0, 90, 0.5) 41%,
+        rgba(255, 200, 0, 0.7) 45%,
+        rgba(255, 255, 255, 0.95) 50%,
+        rgba(0, 255, 170, 0.7) 55%,
+        rgba(0, 160, 255, 0.6) 59%,
+        rgba(180, 0, 255, 0.5) 63%,
+        transparent 68%,
+        transparent 100%
+      ) !important;
+      background-size: 250% 250% !important;
+      background-position: var(--holo-x, 50%) var(--holo-y, 50%) !important;
+    }
+    .card-variant-badge.variant-badge-rainbow {
+      background: linear-gradient(90deg, #ff007f, #7928ca, #00f5ff);
+      color: #ffffff;
+      border: 1px solid rgba(255,255,255,0.8);
+      text-shadow: 0 0 8px #ffffff;
+    }
+
     @keyframes quickSpinAndBounce {
       0% {
         transform: scale(0.3) rotateY(180deg);
@@ -1970,7 +1939,7 @@
 
     @keyframes pullCardSlideOutClean {
       0% { opacity: 1; transform: scale(1) translateX(0); }
-      100% { opacity: 0; transform: scale(0.92) translateX(-45px); }
+      100% { opacity: 0; transform: scale(0.92) translateX(-35px); }
     }
 
     .card-initial-entrance,
@@ -1978,7 +1947,7 @@
       animation: quickSpinAndBounce 0.32s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards !important;
     }
     .card-transition-out {
-      animation: pullCardSlideOutClean 0.18s ease-in forwards !important;
+      animation: pullCardSlideOutClean 0.38s cubic-bezier(0.4, 0, 0.2, 1) forwards !important;
     }
 
     /* SSR MYSTERY HIDDEN CARD BACK & BURST REVEAL */
@@ -2063,7 +2032,7 @@
       z-index: 10;
     }
 
-    /* GACHA NAVIGATION ARROWS (WORK IN GACHA & SUMMON INSPECT) */
+    /* GACHA NAVIGATION ARROWS */
     .gacha-inspect-nav-btn {
       position: absolute;
       top: 50%;
@@ -2258,7 +2227,7 @@
     }
     .pokemon-close-btn:hover { color: #fff; }
 
-    /* LIGHTBOX MODAL WITH FULLSCREEN DRAWER & NAVIGATION ARROWS */
+    /* LIGHTBOX MODAL WITH FULLSCREEN DRAWER */
     .modal {
       display: none;
       position: fixed;
@@ -2313,73 +2282,6 @@
       cursor: grabbing;
       transition: none;
     }
-
-    /* SMOOTH SLIDE/FADE TRANSITION ON ARROW NAVIGATION */
-    .modal-media img.slide-in-right {
-      animation: modalSlideRight 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
-    }
-    .modal-media img.slide-in-left {
-      animation: modalSlideLeft 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
-    }
-    @keyframes modalSlideRight {
-      from { opacity: 0; transform: translateX(42px) scale(0.96); }
-      to { opacity: 1; transform: translateX(0) scale(1); }
-    }
-    @keyframes modalSlideLeft {
-      from { opacity: 0; transform: translateX(-42px) scale(0.96); }
-      to { opacity: 1; transform: translateX(0) scale(1); }
-    }
-
-    .pokemon-card-stage.slide-in-right {
-      animation: pokeSlideRight 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
-    }
-    .pokemon-card-stage.slide-in-left {
-      animation: pokeSlideLeft 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
-    }
-    @keyframes pokeSlideRight {
-      from { opacity: 0; transform: perspective(1400px) translateX(45px) rotateY(16deg) scale(0.95); }
-      to { opacity: 1; transform: perspective(1400px) translateX(0) rotateY(0deg) scale(1); }
-    }
-    @keyframes pokeSlideLeft {
-      from { opacity: 0; transform: perspective(1400px) translateX(-45px) rotateY(-16deg) scale(0.95); }
-      to { opacity: 1; transform: perspective(1400px) translateX(0) rotateY(0deg) scale(1); }
-    }
-
-    /* HIDE ARROWS WHEN ZOOMED */
-    .modal.is-zoomed .modal-nav-arrow,
-    .pokemon-modal.is-zoomed .gacha-inspect-nav-btn {
-      display: none !important;
-      opacity: 0 !important;
-      pointer-events: none !important;
-    }
-
-    /* LEFT / RIGHT NAVIGATION ARROW BUTTONS IN LIGHTBOX */
-    .modal-nav-arrow {
-      position: absolute;
-      top: 50%;
-      transform: translateY(-50%);
-      background: rgba(13, 17, 23, 0.75);
-      border: 1px solid rgba(255, 255, 255, 0.25);
-      color: #ffffff;
-      width: 44px;
-      height: 44px;
-      border-radius: 50%;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 1.3rem;
-      z-index: 25;
-      backdrop-filter: blur(6px);
-      transition: background 0.15s, border-color 0.15s, transform 0.15s, opacity 0.2s ease;
-    }
-    .modal-nav-arrow:hover {
-      background: rgba(88, 166, 255, 0.35);
-      border-color: var(--accent);
-      transform: translateY(-50%) scale(1.08);
-    }
-    .modal-nav-arrow.prev { left: 14px; }
-    .modal-nav-arrow.next { right: 14px; }
 
     .modal-details {
       width: 380px;
@@ -2800,82 +2702,6 @@
       font-size: 0.95rem;
     }
 
-    /* FULLSCREEN IMPORT MODAL */
-    .import-loading-overlay {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(13, 17, 23, 0.78);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      z-index: 2000;
-      justify-content: center;
-      align-items: center;
-      user-select: none;
-    }
-    body.light-theme .import-loading-overlay {
-      background: rgba(246, 248, 250, 0.82);
-    }
-    .import-loading-overlay.active { display: flex; }
-    .import-modal-card {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 2.2rem 2.4rem;
-      width: 90%;
-      max-width: 440px;
-      text-align: center;
-      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.65);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 0.9rem;
-      animation: modalFadeIn 0.2s ease-out;
-    }
-    @keyframes modalFadeIn {
-      from { opacity: 0; transform: scale(0.95); }
-      to { opacity: 1; transform: scale(1); }
-    }
-    .loading-spinner {
-      width: 38px;
-      height: 38px;
-      border: 3.5px solid var(--border);
-      border-top-color: var(--accent);
-      border-radius: 50%;
-      animation: spin 0.75s linear infinite;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .loading-title { font-size: 1.15rem; font-weight: 700; color: var(--text-bold); }
-    .loading-subtext { font-size: 0.84rem; color: var(--subtext); line-height: 1.45; }
-    .loading-progress-track {
-      width: 100%;
-      height: 8px;
-      background: var(--btn-bg);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      overflow: hidden;
-      margin-top: 4px;
-    }
-    .loading-progress-bar {
-      height: 100%;
-      width: 0%;
-      background: linear-gradient(90deg, var(--accent), #2ea043);
-      border-radius: 6px;
-      transition: width 0.15s ease;
-    }
-    .loading-stats { font-size: 0.78rem; color: var(--text); font-weight: 600; }
-    .skip-loading-btn {
-      background: transparent;
-      border: none;
-      color: var(--subtext);
-      font-size: 0.8rem;
-      cursor: pointer;
-      text-decoration: underline;
-      margin-top: 4px;
-      transition: color 0.15s;
-    }
-    .skip-loading-btn:hover { color: var(--text-bold); }
-
     /* CUSTOM NOTIFICATIONS */
     #toastContainer {
       position: fixed;
@@ -3278,16 +3104,6 @@
         max-width: calc(100vw - 16px) !important;
         box-shadow: 0 12px 36px rgba(0, 0, 0, 0.75);
       }
-      .right-controls .dropdown-menu {
-        left: 8px !important;
-        right: 8px !important;
-      }
-      #themeToggleContainer .dropdown-menu,
-      #secretCodeMenu {
-        left: 8px !important;
-        right: 8px !important;
-        width: auto !important;
-      }
 
       .modal { padding: 0; }
       .modal-box {
@@ -3412,6 +3228,25 @@
       .summon-cards-container.single-pull .gacha-card {
         height: 280px !important;
       }
+      .batch-action-bar {
+        bottom: 12px;
+        width: calc(100vw - 16px);
+        max-width: calc(100vw - 16px);
+        padding: 8px 10px;
+        border-radius: 18px;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 6px;
+        box-sizing: border-box;
+      }
+      .batch-btn {
+        padding: 5px 9px;
+        font-size: 0.75rem;
+      }
+      .batch-count-text {
+        font-size: 0.8rem;
+        padding: 0 4px;
+      }
     }
 
     @media (max-width: 480px) {
@@ -3425,4 +3260,479 @@
       .summon-cards-container.single-pull .gacha-card {
         height: 240px !important;
       }
+    }
+
+    /* Compendium Grid Column Scaling */
+    #compendiumContainer .gacha-results-grid {
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+    }
+    #compendiumContainer .gacha-results-grid.masonry-mode {
+      display: flex !important;
+    }
+
+    @media (max-width: 1024px) {
+      #compendiumContainer .gacha-results-grid {
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 640px) {
+      #compendiumContainer .gacha-results-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+    }
+
+    .pokemon-modal.is-zoomed .gacha-inspect-nav-btn,
+    .pokemon-modal.is-zoomed .pokemon-card-actions {
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+
+    /* ===================================================
+    CRYPTO & STOCK EXCHANGE STYLING
+    =================================================== */
+    #marketView {
+      display: none;
+      padding: 1.25rem 1.5rem;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    .market-dashboard-grid {
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 16px;
+    }
+    @media (max-width: 980px) {
+      .market-dashboard-grid { grid-template-columns: 1fr; }
+    }
+    .market-chart-card {
+      background: #131722;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      position: relative;
+    }
+    .market-chart-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .market-asset-info {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+    }
+    .market-asset-symbol {
+      font-size: 1.35rem;
+      font-weight: 800;
+      color: #fff;
+    }
+    .market-asset-price {
+      font-size: 1.4rem;
+      font-weight: 800;
+      color: #26a69a;
+      font-family: monospace;
+    }
+    .market-asset-price.down { color: #ef5350; }
+    .market-asset-chg {
+      font-size: 0.85rem;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .market-asset-chg.up { background: rgba(38,166,154,0.15); color: #26a69a; }
+    .market-asset-chg.down { background: rgba(239,83,80,0.15); color: #ef5350; }
+
+    .market-canvas-container {
+      position: relative;
+      width: 100%;
+      height: 380px;
+      background: #131722;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    #marketCanvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .market-trade-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .wallet-banner {
+      background: rgba(88, 166, 255, 0.08);
+      border: 1px solid rgba(88, 166, 255, 0.25);
+      border-radius: 8px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .wallet-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.85rem;
+    }
+    .wallet-amount {
+      font-size: 1.25rem;
+      font-weight: 800;
+      color: var(--accent);
+      font-family: monospace;
+    }
+
+    .trade-input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .trade-input-group label {
+      font-size: 0.76rem;
+      font-weight: 700;
+      color: var(--subtext);
+      text-transform: uppercase;
+    }
+    .trade-input {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: #fff;
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 0.95rem;
+      font-weight: 700;
+      outline: none;
+      box-sizing: border-box;
+    }
+    .trade-input:focus { border-color: var(--accent); }
+
+    .quick-pct-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+    }
+    .quick-pct-btn {
+      background: var(--btn-bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 5px 0;
+      border-radius: 4px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .quick-pct-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* SINGLE FULL-WIDTH BUY EXECUTION BUTTON */
+    .trade-btn-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+      margin-top: 6px;
+    }
+    .btn-market-buy {
+      background: linear-gradient(135deg, #26a69a 0%, #1e8278 100%);
+      color: #ffffff;
+      border: 1px solid #34d399;
+      padding: 12px 14px;
+      border-radius: 8px;
+      font-weight: 800;
+      font-size: 0.95rem;
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(38, 166, 154, 0.35);
+      transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      letter-spacing: 0.5px;
+    }
+    .btn-market-buy:hover {
+      filter: brightness(1.12);
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(38, 166, 154, 0.5);
+    }
+    .btn-market-buy:active {
+      transform: translateY(1px);
+    }
+
+    /* 100% ORACLE PREDICTION BAR FORMAT */
+    .market-oracle-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: linear-gradient(90deg, rgba(88, 166, 255, 0.12) 0%, rgba(168, 85, 247, 0.16) 100%);
+      border: 1.5px solid rgba(88, 166, 255, 0.45);
+      border-radius: 10px;
+      padding: 10px 14px;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 12px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+    }
+    .oracle-badge {
+      font-size: 0.74rem;
+      font-weight: 900;
+      letter-spacing: 0.8px;
+      padding: 4px 9px;
+      border-radius: 6px;
+      background: linear-gradient(135deg, #7928ca, #a855f7);
+      color: #ffffff;
+      text-transform: uppercase;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      box-shadow: 0 2px 8px rgba(121, 40, 202, 0.45);
+    }
+    .oracle-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.92rem;
+      font-weight: 800;
+    }
+    .oracle-status.bull { color: #26a69a; text-shadow: 0 0 10px rgba(38, 166, 154, 0.4); }
+    .oracle-status.bear { color: #ef5350; text-shadow: 0 0 10px rgba(239, 83, 80, 0.4); }
+    .oracle-advice {
+      font-size: 0.76rem;
+      font-weight: 800;
+      padding: 4px 10px;
+      border-radius: 6px;
+      letter-spacing: 0.4px;
+    }
+    .oracle-advice.buy {
+      background: rgba(38, 166, 154, 0.2);
+      color: #26a69a;
+      border: 1px solid #26a69a;
+      box-shadow: 0 0 12px rgba(38, 166, 154, 0.25);
+    }
+    .oracle-advice.sell {
+      background: rgba(239, 83, 80, 0.2);
+      color: #ef5350;
+      border: 1px solid #ef5350;
+      box-shadow: 0 0 12px rgba(239, 83, 80, 0.25);
+    }
+    .oracle-timer {
+      font-size: 0.75rem;
+      color: var(--subtext);
+      font-family: monospace;
+      font-weight: 700;
+    }
+
+    /* STANDALONE HOLDINGS BOX WITH STYLED SCROLL WHEEL */
+    .holdings-standalone-card {
+      background: var(--bg);
+      border: 1.5px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.35);
+    }
+    .holdings-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--border);
+    }
+    .holdings-card-title {
+      font-size: 0.78rem;
+      font-weight: 800;
+      color: var(--text-bold);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .holdings-count-pill {
+      background: rgba(88, 166, 255, 0.15);
+      color: var(--accent);
+      border: 1px solid rgba(88, 166, 255, 0.35);
+      font-size: 0.68rem;
+      font-weight: 800;
+      padding: 1px 6px;
+      border-radius: 8px;
+    }
+
+    /* ACCENTED SCROLL WHEEL */
+    .holdings-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 230px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding-right: 4px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--accent) rgba(0, 0, 0, 0.3);
+    }
+    .holdings-list::-webkit-scrollbar {
+      width: 6px;
+    }
+    .holdings-list::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.25);
+      border-radius: 6px;
+    }
+    .holdings-list::-webkit-scrollbar-thumb {
+      background: linear-gradient(180deg, var(--accent), var(--accent-cyan));
+      border-radius: 6px;
+      box-shadow: 0 0 6px rgba(88, 166, 255, 0.5);
+    }
+    .holdings-list::-webkit-scrollbar-thumb:hover {
+      background: var(--accent-cyan);
+    }
+
+    /* INDIVIDUAL LOT ROW FORMAT */
+    .holding-lot-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: 6px;
+      padding: 7px 9px;
+      gap: 8px;
+      transition: transform 0.12s ease, border-color 0.12s ease;
+      cursor: pointer;
+    }
+    .holding-lot-row:hover {
+      border-color: var(--accent);
+      background: rgba(88, 166, 255, 0.05);
+      transform: translateX(2px);
+    }
+    .holding-lot-row.profit { border-left-color: #26a69a; }
+    .holding-lot-row.loss { border-left-color: #ef5350; }
+
+    .holding-item-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+    .holding-item-symbol {
+      font-weight: 800;
+      font-size: 0.84rem;
+      color: var(--text-bold);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .holding-item-sub {
+      font-size: 0.70rem;
+      color: var(--subtext);
+      font-family: monospace;
+    }
+    .holding-item-actions {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      flex-shrink: 0;
+    }
+    .holding-sell-btn {
+      background: rgba(239, 83, 80, 0.18);
+      border: 1px solid #ef5350;
+      color: #ef5350;
+      padding: 4px 8px;
+      border-radius: 5px;
+      font-size: 0.72rem;
+      font-weight: 800;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s;
+    }
+    .holding-sell-btn:hover {
+      background: #ef5350;
+      color: #ffffff;
+    }
+    .quick-sell-all-btn {
+      background: transparent;
+      border: none;
+      color: #ef5350;
+      font-size: 0.72rem;
+      font-weight: 700;
+      cursor: pointer;
+      text-decoration: underline;
+    }
+    .quick-sell-all-btn:hover {
+      color: #ff7b72;
+    }
+
+    .daily-login-bar {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 18px;
+      margin-bottom: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    /* Roll button cost pill */
+    .roll-cost-badge {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 1px 7px;
+      border-radius: 6px;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      font-size: 0.72rem;
+      font-weight: 800;
+      color: var(--accent);
+      vertical-align: middle;
+    }
+    .roll-cost-badge.highlight {
+      background: rgba(255, 234, 0, 0.25);
+      border-color: #ffea00;
+      color: #fff;
+      text-shadow: 0 0 6px rgba(255, 234, 0, 0.8);
+    }
+    .gacha-btn-roll1.insufficient,
+    .gacha-btn-roll10.insufficient {
+      opacity: 0.55;
+      filter: grayscale(0.4);
+    }
+
+    /* Darkened & disabled Daily Stipend button */
+    #dailyLoginClaimBtn.claimed-disabled {
+      background: #21262d !important;
+      color: var(--subtext) !important;
+      border-color: var(--border) !important;
+      opacity: 0.55;
+      cursor: not-allowed !important;
+      transform: none !important;
+      box-shadow: none !important;
+      filter: grayscale(0.8);
+    }
+
+    /* Single-card sell button in 3D modal */
+    .btn-sell-single {
+      background: rgba(239, 83, 80, 0.15) !important;
+      border-color: #ef5350 !important;
+      color: #ef5350 !important;
+    }
+    .btn-sell-single:hover {
+      background: #ef5350 !important;
+      color: #fff !important;
+      box-shadow: 0 4px 14px rgba(239, 83, 80, 0.45) !important;
     }

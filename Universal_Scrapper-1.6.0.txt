@@ -1,0 +1,1653 @@
+// ==UserScript==
+// @name         Universal_Scrapper
+// @namespace    https://github.com/kazuki07
+// @version      1.6.0
+// @description  Universal scraper & harvester for Twitter/X, Safebooru, Rule34, Pixiv, Pinterest, and DeviantArt.
+// @author       kazuki07
+// @match        *://*.twitter.com/*
+// @match        *://*.x.com/*
+// @match        *://safebooru.org/*
+// @match        *://rule34.xxx/*
+// @match        *://*.pixiv.net/*
+// @match        *://*.deviantart.com/*
+// @match        *://*.pinterest.com/*
+// @grant        none
+// @run-at       document-idle
+// ==/UserScript==
+
+(() => {
+  if (window.__universalArtScraperActive) {
+    alert("Universal Scraper is already running!");
+    return;
+  }
+  window.__universalArtScraperActive = true;
+
+  // 1. ENVIRONMENT & MODE DETECTION
+  function detectInitialMode() {
+    const host = window.location.hostname;
+    if (host.includes('safebooru.org')) return 'safebooru';
+    if (host.includes('rule34.xxx')) return 'rule34';
+    if (host.includes('deviantart.com')) return 'deviantart';
+    if (host.includes('pixiv.net')) return 'pixiv';
+    if (host.includes('pinterest.com')) return 'pinterest';
+    if (host.includes('twitter.com') || host.includes('x.com')) return 'twitter';
+    return 'safebooru';
+  }
+
+  let currentMode = detectInitialMode();
+  let isScraping = false;
+  let isPicking = false;
+  let idleCount = 0;
+  let hoveredEl = null;
+  const STORAGE_PREFIX = "art_scraper_cache_";
+  const SELECTED_PREFIX = "art_scraper_selected_";
+
+  function getCache() {
+    try {
+      return JSON.parse(localStorage.getItem(STORAGE_PREFIX + currentMode) || "{}");
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function getSelectedCache() {
+    try {
+      return JSON.parse(localStorage.getItem(SELECTED_PREFIX + currentMode) || "{}");
+    } catch (e) {
+      return {};
+    }
+  }
+
+  let scrapedMap = new Map(Object.entries(getCache()));
+  let selectedMap = new Map(Object.entries(getSelectedCache()));
+
+  // 2. LOGGING ENGINE
+  function log(msg) {
+    console.log(`[${currentMode.toUpperCase()}]`, msg);
+    const logEl = document.getElementById('sc-log');
+    if (logEl) {
+      logEl.textContent += `\n${msg}`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+  }
+
+  // 3. UI OVERLAY & STRICT DARK MODE STYLING
+  if (document.getElementById('universal-scraper-panel')) {
+    document.getElementById('universal-scraper-panel').remove();
+  }
+  if (document.getElementById('sc-panel-styles')) {
+    document.getElementById('sc-panel-styles').remove();
+  }
+
+  const styleTag = document.createElement('style');
+  styleTag.id = 'sc-panel-styles';
+  styleTag.textContent = `
+    #universal-scraper-panel,
+    #universal-scraper-panel * {
+      box-sizing: border-box !important;
+      color-scheme: dark !important;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+    }
+    #universal-scraper-panel {
+      position: fixed !important;
+      z-index: 9999999 !important;
+      background: #090d16 !important;
+      background-color: #090d16 !important;
+      color: #f1f5f9 !important;
+      border: 1px solid #30363d !important;
+      border-radius: 10px !important;
+      box-shadow: 0 14px 34px rgba(0,0,0,0.85) !important;
+      width: 285px;
+      font-size: 12px !important;
+      line-height: 1.35 !important;
+      overflow: hidden !important;
+      padding: 12px !important;
+      user-select: none !important;
+      -webkit-user-select: none !important;
+      touch-action: none !important;
+      transition: width 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+                  height 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+                  border-radius 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+                  box-shadow 0.22s ease,
+                  padding 0.2s ease,
+                  border-color 0.2s ease;
+    }
+    #universal-scraper-panel.sc-minimized {
+      width: 42px !important;
+      height: 42px !important;
+      padding: 0 !important;
+      border-radius: 21px !important;
+      border-color: #58a6ff !important;
+      cursor: grab !important;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.7), 0 0 12px rgba(88, 166, 255, 0.35) !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+    }
+    #universal-scraper-panel.sc-minimized:active {
+      cursor: grabbing !important;
+    }
+    #universal-scraper-panel.sc-minimized:hover {
+      transform: scale(1.05);
+    }
+    #universal-scraper-panel div,
+    #universal-scraper-panel span,
+    #universal-scraper-panel p,
+    #universal-scraper-panel b,
+    #universal-scraper-panel label {
+      background: transparent !important;
+      background-color: transparent !important;
+    }
+    #sc-panel-content {
+      opacity: 1;
+      transition: opacity 0.15s ease;
+      display: block;
+      background: transparent !important;
+    }
+    #universal-scraper-panel.sc-minimized #sc-panel-content {
+      opacity: 0 !important;
+      pointer-events: none !important;
+      display: none !important;
+    }
+    #sc-mini-badge-container {
+      display: none;
+      width: 100%;
+      height: 100%;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      font-size: 18px;
+      cursor: grab;
+      background: transparent !important;
+    }
+    #universal-scraper-panel.sc-minimized #sc-mini-badge-container {
+      display: flex !important;
+    }
+    #sc-mini-count {
+      position: absolute !important;
+      top: 3px !important;
+      right: 3px !important;
+      background: #238636 !important;
+      background-color: #238636 !important;
+      color: #ffffff !important;
+      font-size: 8px !important;
+      font-weight: 700 !important;
+      padding: 1px 3px !important;
+      border-radius: 6px !important;
+      border: 1px solid #090d16 !important;
+      min-width: 8px !important;
+      text-align: center !important;
+    }
+    #sc-drag-header {
+      cursor: grab !important;
+      user-select: none !important;
+      -webkit-user-select: none !important;
+      background: transparent !important;
+    }
+    #sc-drag-header:active {
+      cursor: grabbing !important;
+    }
+    #universal-scraper-panel select,
+    #universal-scraper-panel option {
+      background: #21262d !important;
+      background-color: #21262d !important;
+      color: #f0f6fc !important;
+      border: 1px solid #30363d !important;
+    }
+    #sc-log {
+      background: #030712 !important;
+      background-color: #030712 !important;
+      color: #9ca3af !important;
+      border: 1px solid #1f242c !important;
+      user-select: text !important;
+      -webkit-user-select: text !important;
+    }
+    [data-sc-selected="true"] {
+      outline: 3px solid #3fb950 !important;
+      outline-offset: -2px !important;
+    }
+    [data-sc-hovered="true"] {
+      outline: 3px solid #d29922 !important;
+      outline-offset: -2px !important;
+    }
+  `;
+  document.head.appendChild(styleTag);
+
+  const panel = document.createElement('div');
+  panel.id = 'universal-scraper-panel';
+  panel.classList.add('sc-minimized');
+
+  // Default placement on screen (Top-Right)
+  panel.style.top = '16px';
+  panel.style.left = `${Math.max(4, window.innerWidth - 42 - 16)}px`;
+
+  panel.innerHTML = `
+    <div id="sc-mini-badge-container" title="Click to open (Drag to move)">
+      <span style="pointer-events: none;">🎨</span>
+      <span id="sc-mini-count" style="pointer-events: none;">0</span>
+    </div>
+
+    <div id="sc-panel-content">
+      <div id="sc-drag-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 7px; padding-bottom: 4px;">
+        <span style="font-weight: 700; font-size: 13px; color: #58a6ff; display: flex; align-items: center; gap: 4px; pointer-events: none;">
+          <span>⋮⋮</span> K_Scrapper_v1
+        </span>
+        <div style="display: flex; align-items: center; gap: 4px;">
+          <span id="sc-badge" style="font-size: 10px; background: #21262d !important; color: #f0f6fc !important; padding: 2px 6px; border-radius: 4px; border: 1px solid #30363d !important;">Ready</span>
+          <button id="sc-header-min-btn" title="Minimize" style="background: #21262d; border: 1px solid #30363d; color: #8b949e; border-radius: 4px; width: 20px; height: 20px; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; line-height: 1;">−</button>
+          <button id="sc-close-btn" title="Close and Exit" style="background: #21262d; border: 1px solid #30363d; color: #f85149; border-radius: 4px; width: 20px; height: 20px; font-size: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; line-height: 1;">✕</button>
+        </div>
+      </div>
+
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 7px; background: #161b22 !important; padding: 4px 6px; border-radius: 5px; border: 1px solid #30363d !important;">
+        <span style="color: #8b949e; font-size: 11px;">Platform:</span>
+        <select id="sc-mode-select" style="padding: 2px 5px; border-radius: 4px; outline: none; font-size: 11px; cursor: pointer;">
+          <option value="twitter">🐦 Twitter / X</option>
+          <option value="safebooru">🛡️ Safebooru</option>
+          <option value="rule34">🔞 Rule34</option>
+          <option value="pixiv">🖌️ Pixiv</option>
+          <option value="deviantart">🎨 DeviantArt</option>
+          <option value="pinterest">📌 Pinterest</option>
+        </select>
+      </div>
+
+      <div style="display: flex; justify-content: space-between; margin-bottom: 2px; color: #f1f5f9;">
+        <span style="color: #9ca3af;">Captured Total:</span>
+        <b id="sc-total-count" style="color: #58a6ff;">0</b>
+      </div>
+      <div style="display: flex; justify-content: space-between; margin-bottom: 2px; color: #f1f5f9;">
+        <span style="color: #9ca3af;">Selected Posts:</span>
+        <b id="sc-selected-count" style="color: #d29922;">0</b>
+      </div>
+      <div style="display: flex; justify-content: space-between; margin-bottom: 7px; color: #f1f5f9;">
+        <span style="color: #9ca3af;">Multi-Media:</span>
+        <b id="sc-media-count" style="color: #3fb950;">0</b>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px;">
+        <button id="sc-toggle-btn" style="background: #238636; color: #ffffff; border: none; padding: 6px; border-radius: 5px; font-weight: 600; cursor: pointer; font-size: 11px;">Start Auto-Scroll</button>
+        <button id="sc-rescan-btn" style="background: #1f6feb; color: #ffffff; border: none; padding: 6px; border-radius: 5px; font-size: 11px; font-weight: 500; cursor: pointer;">Scan Visible</button>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px;">
+        <button id="sc-page-btn" style="background: #8957e5; color: #ffffff; border: none; padding: 6px; border-radius: 5px; font-size: 11px; font-weight: 500; cursor: pointer;">Fetch Page</button>
+        <button id="sc-pick-btn" style="background: #d29922; color: #ffffff; border: none; padding: 6px; border-radius: 5px; font-size: 11px; font-weight: 500; cursor: pointer;">Select Posts</button>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px;">
+        <button id="sc-export-btn" style="background: #21262d; border: 1px solid #30363d; color: #f0f6fc; padding: 6px; border-radius: 5px; font-weight: 600; cursor: pointer; font-size: 11px;">Export All</button>
+        <button id="sc-export-selected-btn" style="background: #21262d; border: 1px solid #30363d; color: #d29922; padding: 6px; border-radius: 5px; font-weight: 600; cursor: pointer; font-size: 11px;">Export Sel. (0)</button>
+      </div>
+
+      <div id="sc-log" style="height: 65px; overflow-y: auto; padding: 4px 6px; border-radius: 5px; font-family: monospace; font-size: 10px; white-space: pre-wrap; margin-bottom: 7px;">Ready...</div>
+
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 7px;">
+        <button id="sc-clear-btn" style="background: transparent; color: #f85149; border: none; font-size: 10px; cursor: pointer; text-decoration: underline; padding: 0;">Wipe Mode Cache</button>
+        <button id="sc-clear-selected-btn" style="background: transparent; color: #8b949e; border: none; font-size: 10px; cursor: pointer; padding: 0;">Clear Selection</button>
+      </div>
+
+      <div style="display: flex; align-items: center; justify-content: center; gap: 5px; padding-top: 6px; border-top: 1px solid #1f242c; font-size: 10px; color: #8b949e; user-select: none;">
+        <span>©</span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="#5865F2" style="display: inline-block; vertical-align: middle;">
+          <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.929 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.894.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/>
+        </svg>
+        <span style="font-family: monospace; font-size: 10px; color: #c9d1d9;">kazuki07</span>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(panel);
+
+  // 4. PRECISE DRAG ENGINE & BIDIRECTIONAL EXPANSION
+  let isDragging = false;
+  let hasMoved = false;
+  let dragStartX = 0;
+  let dragStartY = 0;
+  let initialLeft = 0;
+  let initialTop = 0;
+
+  function startDrag(e) {
+    if (e.button !== 0) return;
+    if (e.target.closest('button, select, input, a, #sc-log')) return;
+
+    const rect = panel.getBoundingClientRect();
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    initialLeft = rect.left;
+    initialTop = rect.top;
+    isDragging = true;
+    hasMoved = false;
+
+    panel.style.left = `${initialLeft}px`;
+    panel.style.top = `${initialTop}px`;
+    panel.style.right = 'auto';
+    panel.style.bottom = 'auto';
+    panel.style.transition = 'none';
+
+    window.addEventListener('pointermove', onDragMove, true);
+    window.addEventListener('pointerup', onDragEnd, true);
+    e.preventDefault();
+  }
+
+  function onDragMove(e) {
+    if (!isDragging) return;
+    const dx = e.clientX - dragStartX;
+    const dy = e.clientY - dragStartY;
+
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+      hasMoved = true;
+    }
+
+    const curWidth = panel.offsetWidth;
+    const curHeight = panel.offsetHeight;
+
+    const newLeft = Math.max(4, Math.min(window.innerWidth - curWidth - 4, initialLeft + dx));
+    const newTop = Math.max(4, Math.min(window.innerHeight - curHeight - 4, initialTop + dy));
+
+    panel.style.left = `${newLeft}px`;
+    panel.style.top = `${newTop}px`;
+  }
+
+  function onDragEnd() {
+    if (!isDragging) return;
+    isDragging = false;
+    panel.style.transition = '';
+    window.removeEventListener('pointermove', onDragMove, true);
+    window.removeEventListener('pointerup', onDragEnd, true);
+  }
+
+  panel.addEventListener('pointerdown', startDrag);
+
+  function expandPanel() {
+    const rect = panel.getBoundingClientRect();
+    const newLeft = Math.max(4, rect.left - 243);
+    panel.style.left = `${newLeft}px`;
+    panel.style.top = `${Math.max(4, rect.top)}px`;
+    panel.classList.remove('sc-minimized');
+  }
+
+  function minimizePanel() {
+    const rect = panel.getBoundingClientRect();
+    const newLeft = Math.min(window.innerWidth - 46, rect.left + 243);
+    panel.style.left = `${newLeft}px`;
+    panel.style.top = `${Math.max(4, rect.top)}px`;
+    panel.classList.add('sc-minimized');
+  }
+
+  panel.addEventListener('click', () => {
+    if (hasMoved) return;
+    if (panel.classList.contains('sc-minimized')) {
+      expandPanel();
+    }
+  });
+
+  const modeSelect = document.getElementById('sc-mode-select');
+  const totalCountEl = document.getElementById('sc-total-count');
+  const selectedCountEl = document.getElementById('sc-selected-count');
+  const mediaCountEl = document.getElementById('sc-media-count');
+  const miniCountEl = document.getElementById('sc-mini-count');
+  const badgeEl = document.getElementById('sc-badge');
+  const toggleBtn = document.getElementById('sc-toggle-btn');
+  const rescanBtn = document.getElementById('sc-rescan-btn');
+  const pageBtn = document.getElementById('sc-page-btn');
+  const pickBtn = document.getElementById('sc-pick-btn');
+  const exportBtn = document.getElementById('sc-export-btn');
+  const exportSelectedBtn = document.getElementById('sc-export-selected-btn');
+  const clearBtn = document.getElementById('sc-clear-btn');
+  const clearSelectedBtn = document.getElementById('sc-clear-selected-btn');
+  const headerMinBtn = document.getElementById('sc-header-min-btn');
+  const closeBtn = document.getElementById('sc-close-btn');
+
+  modeSelect.value = currentMode;
+
+  headerMinBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    minimizePanel();
+  });
+
+  function updateCounters() {
+    totalCountEl.innerText = scrapedMap.size;
+    selectedCountEl.innerText = selectedMap.size;
+    miniCountEl.innerText = scrapedMap.size;
+    exportSelectedBtn.innerText = `Export Sel. (${selectedMap.size})`;
+
+    let withMedia = 0;
+    for (const t of scrapedMap.values()) {
+      if (t.mediaUrls && t.mediaUrls.length > 1) withMedia++;
+    }
+    mediaCountEl.innerText = withMedia;
+  }
+
+  function saveToDisk() {
+    try {
+      localStorage.setItem(STORAGE_PREFIX + currentMode, JSON.stringify(Object.fromEntries(scrapedMap)));
+      localStorage.setItem(SELECTED_PREFIX + currentMode, JSON.stringify(Object.fromEntries(selectedMap)));
+    } catch (e) {}
+  }
+
+  function clearAllDomOutlines() {
+    document.querySelectorAll('[data-sc-selected="true"], [data-sc-hovered="true"]').forEach(el => {
+      el.removeAttribute('data-sc-selected');
+      el.removeAttribute('data-sc-hovered');
+    });
+  }
+
+  modeSelect.addEventListener('change', (e) => {
+    clearAllDomOutlines();
+    currentMode = e.target.value;
+    scrapedMap = new Map(Object.entries(getCache()));
+    selectedMap = new Map(Object.entries(getSelectedCache()));
+    updateCounters();
+    log(`Switched to mode: ${currentMode.toUpperCase()}`);
+  });
+
+  // 5. PLATFORM EXTRACTION LOGIC
+
+  // --- TWITTER / X ---
+  function findTweetDataFromDOM(el) {
+    if (!el) return null;
+    const key = Object.keys(el).find(k => k.startsWith('__reactFiber$') || k.startsWith('__reactProps$'));
+    if (!key) return null;
+
+    let curr = el[key];
+    let depth = 0;
+    while (curr && depth < 50) {
+      const p = curr.memoizedProps;
+      if (p) {
+        if (p.tweet && (p.tweet.legacy || p.tweet.rest_id)) return p.tweet;
+        if (p.result && (p.result.legacy || p.result.rest_id)) return p.result;
+        if (p.legacy && (p.legacy.full_text !== undefined || p.legacy.id_str)) return p;
+      }
+      curr = curr.return;
+      depth++;
+    }
+    return null;
+  }
+
+  function processTweetLegacy(tweetNode) {
+    if (!tweetNode) return false;
+    const tweet = tweetNode.tweet || tweetNode;
+    const legacy = tweet.legacy || tweet;
+    const tweetId = legacy.id_str || tweet.rest_id || tweet.id_str;
+    if (!tweetId) return false;
+
+    const userResult = tweet.core?.user_results?.result;
+    const userLegacy = userResult?.legacy || userResult?.core;
+    const authorHandle = userLegacy?.screen_name
+      ? `@${userLegacy.screen_name}`
+      : (tweet.user?.screen_name ? `@${tweet.user.screen_name}` : '');
+    const authorName = userLegacy?.name || tweet.user?.name || authorHandle;
+
+    const mediaList = legacy.extended_entities?.media || legacy.entities?.media || tweet.extended_entities?.media || [];
+    const mediaUrls = [];
+    let videoPoster = null;
+    let videoUrl = null;
+
+    mediaList.forEach(m => {
+      const rawUrl = m.media_url_https || m.media_url;
+      let highRes = rawUrl;
+      if (rawUrl) {
+        const match = rawUrl.match(/^https?:\/\/pbs\.twimg\.com\/media\/([^.]+)\.([a-z]+)/i);
+        if (match) {
+          highRes = `https://pbs.twimg.com/media/${match[1]}?format=${match[2]}&name=orig`;
+        }
+      }
+
+      if (m.type === 'photo') {
+        if (highRes && !mediaUrls.includes(highRes)) mediaUrls.push(highRes);
+      } else if (m.type === 'video' || m.type === 'animated_gif') {
+        videoPoster = highRes || rawUrl;
+        if (m.video_info && Array.isArray(m.video_info.variants)) {
+          const mp4s = m.video_info.variants
+            .filter(v => v.content_type === 'video/mp4' && v.url)
+            .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+
+          if (mp4s.length > 0) {
+            videoUrl = mp4s[0].url;
+          } else if (m.video_info.variants[0]?.url) {
+            videoUrl = m.video_info.variants[0].url;
+          }
+        }
+
+        if (videoUrl && !mediaUrls.includes(videoUrl)) {
+          mediaUrls.push(videoUrl);
+        } else if (videoPoster && !mediaUrls.includes(videoPoster)) {
+          mediaUrls.push(videoPoster);
+        }
+      }
+    });
+
+    const existing = scrapedMap.get(tweetId);
+    if (existing && existing.videoUrl && existing.mediaUrls && existing.mediaUrls.length >= mediaList.length) return true;
+
+    scrapedMap.set(tweetId, {
+      authorHandle: authorHandle,
+      authorName: authorName,
+      id: tweetId,
+      isArticle: false,
+      isVideo: !!videoUrl,
+      linkCard: null,
+      mediaUrl: videoUrl || mediaUrls[0] || null,
+      mediaUrls: mediaUrls,
+      quotedTweet: null,
+      scrapedAt: new Date().toISOString(),
+      text: legacy.full_text || tweet.text || '',
+      timestamp: legacy.created_at ? new Date(legacy.created_at).toISOString() : new Date().toISOString(),
+      url: authorHandle ? `https://x.com/${authorHandle.replace('@', '')}/status/${tweetId}` : `https://x.com/i/status/${tweetId}`,
+      videoPoster: videoPoster,
+      videoUrl: videoUrl
+    });
+
+    saveToDisk();
+    updateCounters();
+    return true;
+  }
+
+  function extractTweetElement(article) {
+    if (!article) return false;
+    try {
+      const reactTweet = findTweetDataFromDOM(article);
+      if (reactTweet && processTweetLegacy(reactTweet)) return true;
+
+      const timeEl = article.querySelector('time');
+      if (!timeEl) return false;
+      const href = timeEl.closest('a')?.getAttribute('href') || '';
+      const match = href.match(/\/([^\/]+)\/status\/(\d+)/);
+      if (!match) return false;
+
+      const tweetId = match[2];
+      const mediaUrls = [];
+
+      article.querySelectorAll('img[src*="pbs.twimg.com/media/"]').forEach(img => {
+        const highRes = img.src.replace(/&name=[a-z0-9_]+/i, '&name=orig');
+        if (!mediaUrls.includes(highRes)) mediaUrls.push(highRes);
+      });
+
+      let videoPoster = null;
+      const videoEl = article.querySelector('video');
+      if (videoEl && videoEl.getAttribute('poster')) {
+        videoPoster = videoEl.getAttribute('poster');
+      } else {
+        const videoThumb = article.querySelector('img[src*="video_thumb"], img[src*="ext_tw_video_thumb"], img[src*="amplify_video_thumb"]');
+        if (videoThumb) videoPoster = videoThumb.src;
+      }
+
+      if (videoPoster) {
+        videoPoster = videoPoster.replace(/&name=[a-z0-9_]+/i, '&name=orig');
+        if (!mediaUrls.includes(videoPoster)) mediaUrls.push(videoPoster);
+      }
+
+      const existing = scrapedMap.get(tweetId);
+      if (existing && existing.mediaUrls && existing.mediaUrls.length >= mediaUrls.length && existing.mediaUrls.length > 0) return true;
+
+      const userHeader = article.querySelector('div[data-testid="User-Name"]');
+      const authorName = userHeader?.querySelector('span')?.innerText || match[1];
+      const textEl = article.querySelector('div[data-testid="tweetText"]');
+
+      scrapedMap.set(tweetId, {
+        authorHandle: '@' + match[1],
+        authorName: authorName,
+        id: tweetId,
+        isArticle: false,
+        isVideo: !!videoPoster,
+        linkCard: null,
+        mediaUrl: mediaUrls[0] || null,
+        mediaUrls: mediaUrls,
+        quotedTweet: null,
+        scrapedAt: new Date().toISOString(),
+        text: textEl ? textEl.innerText : '',
+        timestamp: timeEl.getAttribute('datetime') || new Date().toISOString(),
+        url: `https://x.com${href}`,
+        videoPoster: videoPoster,
+        videoUrl: null
+      });
+
+      saveToDisk();
+      updateCounters();
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function harvestTwitterDOM() {
+    const articles = document.querySelectorAll('article[data-testid="tweet"]');
+    articles.forEach(article => extractTweetElement(article));
+  }
+
+  // --- SAFEBOORU ---
+  function extractSafebooruThumb(thumb) {
+    if (!thumb) return null;
+    const link = thumb.querySelector('a') || (thumb.tagName === 'A' ? thumb : null);
+    if (!link) return null;
+    const href = link.getAttribute('href') || '';
+    const match = href.match(/id=(\d+)/);
+    if (!match) return null;
+
+    const id = match[1];
+    const img = thumb.querySelector('img');
+    const titleAttr = img?.getAttribute('title') || img?.getAttribute('alt') || '';
+    const thumbSrc = img?.src || '';
+    if (!thumbSrc) return null;
+
+    let highRes = thumbSrc
+      .replace('/thumbnails/', '/images/')
+      .replace('/thumbnail_', '/');
+
+    const postObj = {
+      authorHandle: '@safebooru',
+      authorName: 'Safebooru Creator',
+      id: 'safebooru_' + id,
+      isArticle: false,
+      isVideo: false,
+      linkCard: null,
+      mediaUrl: highRes || thumbSrc,
+      mediaUrls: [highRes || thumbSrc],
+      fallbackUrl: thumbSrc,
+      quotedTweet: null,
+      scrapedAt: new Date().toISOString(),
+      text: titleAttr,
+      timestamp: new Date().toISOString(),
+      url: `https://safebooru.org/index.php?page=post&s=view&id=${id}`,
+      videoPoster: thumbSrc
+    };
+
+    scrapedMap.set('safebooru_' + id, postObj);
+    return 'safebooru_' + id;
+  }
+
+  function harvestSafebooruDOM() {
+    const thumbs = document.querySelectorAll('span.thumb, article.thumb');
+    thumbs.forEach(thumb => {
+      const link = thumb.querySelector('a');
+      if (!link) return;
+      const href = link.getAttribute('href') || '';
+      const match = href.match(/id=(\d+)/);
+      if (!match) return;
+
+      const id = match[1];
+      if (scrapedMap.has('safebooru_' + id)) return;
+      extractSafebooruThumb(thumb);
+    });
+    saveToDisk();
+    updateCounters();
+  }
+
+  function extractSafebooruPage() {
+    const loc = window.location.href;
+    const match = loc.match(/id=(\d+)/);
+    if (!match) return false;
+    const id = match[1];
+
+    const img = document.querySelector('img#image, #gelcomVideoPlayer');
+    const source = img?.tagName === 'VIDEO' ? (img.querySelector('source')?.src || img.src) : img?.src;
+    const directLink = Array.from(document.querySelectorAll('a')).find(a => a.textContent && a.textContent.includes('Original image'))?.href;
+    const media = directLink || source;
+
+    if (!media) return false;
+
+    const tags = Array.from(document.querySelectorAll('li.tag-type-general a, li.tag-type-artist a, li.tag-type-character a, li.tag-type-copyright a'))
+      .map(a => a.innerText.trim())
+      .filter(t => t && t !== '?')
+      .join(' ');
+
+    const postObj = {
+      authorHandle: '@safebooru',
+      authorName: 'Safebooru Creator',
+      id: 'safebooru_' + id,
+      isArticle: false,
+      isVideo: media.includes('.mp4') || media.includes('.webm'),
+      linkCard: null,
+      mediaUrl: media,
+      mediaUrls: [media],
+      fallbackUrl: media,
+      quotedTweet: null,
+      scrapedAt: new Date().toISOString(),
+      text: tags,
+      timestamp: new Date().toISOString(),
+      url: loc,
+      videoPoster: null
+    };
+
+    scrapedMap.set('safebooru_' + id, postObj);
+    selectedMap.set('safebooru_' + id, postObj);
+    saveToDisk();
+    updateCounters();
+    return true;
+  }
+
+  // --- RULE34 ---
+  function extractRule34Thumb(thumb) {
+    if (!thumb) return null;
+    const link = thumb.querySelector('a') || (thumb.tagName === 'A' ? thumb : null);
+    if (!link) return null;
+    const href = link.getAttribute('href') || '';
+    const match = href.match(/id=(\d+)/);
+    if (!match) return null;
+
+    const id = match[1];
+    const img = thumb.querySelector('img');
+    const titleAttr = img?.getAttribute('title') || img?.getAttribute('alt') || '';
+    const thumbSrc = img?.src || '';
+    if (!thumbSrc) return null;
+
+    let highRes = thumbSrc
+      .replace('/thumbnails/', '/images/')
+      .replace('/thumbnail_', '/');
+
+    const postObj = {
+      authorHandle: '@rule34',
+      authorName: 'Rule34 Creator',
+      id: 'rule34_' + id,
+      isArticle: false,
+      isVideo: false,
+      linkCard: null,
+      mediaUrl: highRes || thumbSrc,
+      mediaUrls: [highRes || thumbSrc],
+      fallbackUrl: thumbSrc,
+      quotedTweet: null,
+      scrapedAt: new Date().toISOString(),
+      text: titleAttr,
+      timestamp: new Date().toISOString(),
+      url: `https://rule34.xxx/index.php?page=post&s=view&id=${id}`,
+      videoPoster: thumbSrc
+    };
+
+    scrapedMap.set('rule34_' + id, postObj);
+    return 'rule34_' + id;
+  }
+
+  function harvestRule34DOM() {
+    const thumbs = document.querySelectorAll('span.thumb, article.thumb');
+    thumbs.forEach(thumb => {
+      const link = thumb.querySelector('a');
+      if (!link) return;
+      const href = link.getAttribute('href') || '';
+      const match = href.match(/id=(\d+)/);
+      if (!match) return;
+
+      const id = match[1];
+      if (scrapedMap.has('rule34_' + id)) return;
+      extractRule34Thumb(thumb);
+    });
+    saveToDisk();
+    updateCounters();
+  }
+
+  function extractRule34Page() {
+    const loc = window.location.href;
+    const match = loc.match(/id=(\d+)/);
+    if (!match) return false;
+    const id = match[1];
+
+    const img = document.querySelector('img#image, #gelcomVideoPlayer');
+    const source = img?.tagName === 'VIDEO' ? (img.querySelector('source')?.src || img.src) : img?.src;
+    const directLink = Array.from(document.querySelectorAll('a')).find(a => a.textContent && a.textContent.includes('Original image'))?.href;
+    const media = directLink || source;
+
+    if (!media) return false;
+
+    const tags = Array.from(document.querySelectorAll('li.tag-type-general a, li.tag-type-artist a, li.tag-type-character a'))
+      .map(a => a.innerText.trim())
+      .filter(t => t && t !== '?')
+      .join(' ');
+
+    const postObj = {
+      authorHandle: '@rule34',
+      authorName: 'Rule34 Creator',
+      id: 'rule34_' + id,
+      isArticle: false,
+      isVideo: media.includes('.mp4') || media.includes('.webm'),
+      linkCard: null,
+      mediaUrl: media,
+      mediaUrls: [media],
+      fallbackUrl: media,
+      quotedTweet: null,
+      scrapedAt: new Date().toISOString(),
+      text: tags,
+      timestamp: new Date().toISOString(),
+      url: loc,
+      videoPoster: null
+    };
+
+    scrapedMap.set('rule34_' + id, postObj);
+    selectedMap.set('rule34_' + id, postObj);
+    saveToDisk();
+    updateCounters();
+    return true;
+  }
+
+  // --- PIXIV ---
+  function toProxyMasterUrl(url) {
+    if (!url) return '';
+    return url
+      .replace('i.pximg.net', 'i.pixiv.re')
+      .replace(/\/c\/\d+x\d+[^/]*\//, '/')
+      .replace(/_(?:square|custom)1200\./, '_master1200.');
+  }
+
+  function generatePixivMediaUrls(primaryUrl, pageCount = 1) {
+    const highRes = toProxyMasterUrl(primaryUrl);
+    if (!highRes) return [];
+    if (pageCount <= 1 || !highRes.includes('_p0_')) return [highRes];
+
+    const urls = [];
+    for (let i = 0; i < pageCount; i++) {
+      urls.push(highRes.replace('_p0_', `_p${i}_`));
+    }
+    return urls;
+  }
+
+  function processPixivWork(work) {
+    if (!work || !work.id) return;
+    const id = String(work.id);
+    const authorName = work.userName || 'Unknown Artist';
+    const authorHandle = work.userId ? `@${work.userId}` : `@${authorName.replace(/\s+/g, '')}`;
+    const rawThumb = work.url || work.profileImageUrl || '';
+    const pageCount = work.pageCount || 1;
+    const mediaList = generatePixivMediaUrls(rawThumb, pageCount);
+
+    if (!mediaList.length) return;
+
+    const isMature = work.xRestrict === 1 || work.xRestrict === 2 || (Array.isArray(work.tags) && work.tags.some(t => {
+      const tagStr = typeof t === 'string' ? t : t.tag || '';
+      return tagStr.toLowerCase().includes('r-18');
+    }));
+
+    const tags = Array.isArray(work.tags)
+      ? work.tags.map(t => `#${typeof t === 'string' ? t : t.tag || ''}`).join(' ')
+      : '';
+    const matureTag = isMature && !tags.includes('#R-18') ? '#R18 #NSFW ' : '';
+    const fullText = [work.title || 'Untitled', (matureTag + tags).trim()].filter(Boolean).join('\n\n');
+
+    const existing = scrapedMap.get(id);
+    if (existing && existing.mediaUrls && existing.mediaUrls.length >= mediaList.length) return;
+
+    scrapedMap.set(id, {
+      authorHandle: authorHandle,
+      authorName: authorName,
+      id: 'pixiv_' + id,
+      isArticle: false,
+      linkCard: null,
+      mediaUrl: mediaList[0],
+      mediaUrls: mediaList,
+      quotedTweet: null,
+      scrapedAt: new Date().toISOString(),
+      text: fullText,
+      timestamp: work.createDate || work.updateDate || new Date().toISOString(),
+      url: `https://www.pixiv.net/artworks/${id}`,
+      videoPoster: null
+    });
+
+    saveToDisk();
+    updateCounters();
+  }
+
+  function extractPixivCard(card) {
+    if (!card) return false;
+    try {
+      const link = card.matches('a[href*="/artworks/"]') ? card : card.querySelector('a[href*="/artworks/"]');
+      if (!link) return false;
+
+      const href = link.getAttribute('href') || '';
+      const match = href.match(/\/artworks\/(\d+)/);
+      if (!match) return false;
+
+      const id = match[1];
+      const img = link.querySelector('img') || card.querySelector('img');
+      if (!img || !img.src || img.src.startsWith('data:') || img.src.includes('profile_images')) return false;
+
+      const mediaList = generatePixivMediaUrls(img.src, 1);
+      const title = img.getAttribute('alt') || link.getAttribute('aria-label') || 'Untitled';
+      const authorEl = card.querySelector('a[href*="/users/"]');
+      const authorName = authorEl ? authorEl.innerText.trim() : 'Pixiv Artist';
+      const authorId = authorEl?.getAttribute('href')?.match(/\/users\/(\d+)/)?.[1] || '';
+
+      const existing = scrapedMap.get(id);
+      if (existing && existing.mediaUrls && existing.mediaUrls.length > 0) return true;
+
+      scrapedMap.set(id, {
+        authorHandle: authorId ? `@${authorId}` : `@${authorName.replace(/\s+/g, '')}`,
+        authorName: authorName,
+        id: 'pixiv_' + id,
+        isArticle: false,
+        linkCard: null,
+        mediaUrl: mediaList[0],
+        mediaUrls: mediaList,
+        quotedTweet: null,
+        scrapedAt: new Date().toISOString(),
+        text: title,
+        timestamp: new Date().toISOString(),
+        url: `https://www.pixiv.net/artworks/${id}`,
+        videoPoster: null
+      });
+
+      saveToDisk();
+      updateCounters();
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function harvestPixivDOM() {
+    const artLinks = document.querySelectorAll('a[href*="/artworks/"]');
+    artLinks.forEach(link => extractPixivCard(link.closest('li') || link));
+  }
+
+  // --- PINTEREST ---
+  function cleanPinText(raw) {
+    if (!raw) return '';
+    return raw
+      .replace(/^Mục này có hình ảnh của:\s*/i, '')
+      .replace(/^Có thể là hình ảnh về:\s*/i, '')
+      .replace(/^Hình ảnh có thể có:\s*/i, '')
+      .replace(/^May be an image of:\s*/i, '')
+      .replace(/^Image may contain:\s*/i, '')
+      .replace(/^Photo by\s+/i, '')
+      .trim();
+  }
+
+  function processPin(pin) {
+    if (!pin || !pin.id) return;
+    const id = String(pin.id);
+    if (!/^\d+$/.test(id)) return;
+
+    const images = pin.images || pin.image_spec || {};
+    const orig = images.orig?.url || images['originals']?.url;
+    const standard = images['736x']?.url || images['564x']?.url || images['474x']?.url;
+    const highRes = orig || standard || '';
+    const fallback = standard || highRes;
+
+    if (!highRes || highRes.includes('/avatars/')) return;
+
+    const pinner = pin.pinner || pin.native_creator || pin.creator || pin.board_owner || {};
+    const authorName = pinner.full_name || pinner.name || pinner.username || '';
+    const authorHandle = pinner.username ? `@${pinner.username}` : (authorName ? `@${authorName.replace(/\s+/g, '')}` : '@pinterest');
+
+    const title = pin.title || pin.grid_title || '';
+    const desc = pin.description || pin.rich_summary?.display_description || '';
+    const text = cleanPinText([title, desc].filter(Boolean).join('\n\n') || '');
+
+    scrapedMap.set(id, {
+      authorHandle: authorHandle,
+      authorName: authorName || 'Pinterest Creator',
+      id: 'pin_' + id,
+      isArticle: false,
+      linkCard: null,
+      mediaUrl: highRes,
+      mediaUrls: [highRes],
+      fallbackUrl: fallback,
+      quotedTweet: null,
+      scrapedAt: new Date().toISOString(),
+      text: text,
+      timestamp: pin.created_at ? new Date(pin.created_at).toISOString() : new Date().toISOString(),
+      url: `https://www.pinterest.com/pin/${id}/`,
+      videoPoster: pin.videos?.video_list?.V_720P?.thumbnail || null
+    });
+
+    saveToDisk();
+    updateCounters();
+  }
+
+  function extractPinterestCard(card) {
+    if (!card) return false;
+    try {
+      const link = card.querySelector('a[href*="/pin/"]') || card.closest('a[href*="/pin/"]');
+      if (!link) return false;
+      const match = (link.getAttribute('href') || '').match(/\/pin\/(\d+)/);
+      if (!match) return false;
+
+      const id = match[1];
+      if (scrapedMap.has(id)) return true;
+
+      const img = card.querySelector('img:not([src*="/avatars/"]):not([src*="_RS"])');
+      if (!img || !img.src || img.src.startsWith('data:')) return false;
+
+      const highRes = img.src.replace(/\/(?:236x|474x|564x)\//, '/736x/');
+      const title = cleanPinText(img.getAttribute('alt') || link.getAttribute('aria-label') || '');
+
+      const authorLink = card.querySelector('a[href^="/"]:not([href*="/pin/"])');
+      let authorName = '';
+      let authorHandle = '@pinterest';
+      if (authorLink) {
+        const handle = authorLink.getAttribute('href').replace(/\//g, '');
+        if (handle && !['today', 'watch', 'shop'].includes(handle)) {
+          authorHandle = '@' + handle;
+          authorName = authorLink.innerText.trim() || handle;
+        }
+      }
+
+      scrapedMap.set(id, {
+        authorHandle: authorHandle,
+        authorName: authorName || 'Pinterest Creator',
+        id: 'pin_' + id,
+        isArticle: false,
+        linkCard: null,
+        mediaUrl: highRes,
+        mediaUrls: [highRes],
+        fallbackUrl: img.src,
+        quotedTweet: null,
+        scrapedAt: new Date().toISOString(),
+        text: title,
+        timestamp: new Date().toISOString(),
+        url: `https://www.pinterest.com/pin/${id}/`,
+        videoPoster: null
+      });
+
+      saveToDisk();
+      updateCounters();
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function harvestPinterestDOM() {
+    const cards = document.querySelectorAll('div[data-test-id="pin"], div[data-test-id="pinWrapper"]');
+    cards.forEach(card => extractPinterestCard(card));
+  }
+
+  // --- DEVIANTART ---
+  function enhanceWixmpUrl(rawUrl) {
+    if (!rawUrl || !rawUrl.startsWith('http')) return { url: null, fallback_url: null };
+
+    const tokenMatch = rawUrl.match(/token=([a-zA-Z0-9_\-\.]+)/);
+    if (!tokenMatch) return { url: rawUrl, fallback_url: rawUrl };
+
+    try {
+      const payloadB64 = tokenMatch[1].split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+      const payload = JSON.parse(atob(payloadB64));
+      const obj = payload?.obj?.[0]?.[0];
+
+      if (obj && obj.path) {
+        if (payload.aud && payload.aud.includes("urn:service:file.download")) {
+          const directUrl = `https://images-wixmp-ed30a86b8c4ca887773594c2.wixmp.com${obj.path}?token=${tokenMatch[1]}`;
+          return { url: directUrl, fallback_url: directUrl };
+        }
+        const maxW = obj.width ? parseInt(obj.width.replace(/[^\d]/g, ''), 10) : 1280;
+        const maxH = obj.height ? parseInt(obj.height.replace(/[^\d]/g, ''), 10) : 1280;
+        const highRes = rawUrl.replace(/\/v1\/(?:fill|crop|fit)\/[^\/]+(?=\/)/i, `/v1/fit/w_${maxW},h_${maxH},q_95`);
+        return { url: highRes, fallback_url: rawUrl };
+      }
+    } catch (e) {}
+
+    return { url: rawUrl, fallback_url: rawUrl };
+  }
+
+  function extractDeviantArtPage(html, doc, fallbackThumb, pageUrl) {
+    let title = "Untitled";
+    let authorName = "DeviantArt Artist";
+    let publishedTime = new Date().toISOString();
+    const mediaUrls = [];
+
+    const titleEl = doc.querySelector('h1') || doc.querySelector('meta[property="og:title"]');
+    if (titleEl) title = titleEl.textContent || titleEl.getAttribute("content") || title;
+
+    const urlMatch = pageUrl.match(/deviantart\.com\/([^\/]+)\/art\//i);
+    if (urlMatch) {
+      authorName = urlMatch[1];
+    } else {
+      const aLink = doc.querySelector('a[data-username]') || doc.querySelector('a.user-link');
+      if (aLink) authorName = aLink.getAttribute("data-username") || aLink.textContent.trim();
+    }
+
+    const timeEl = doc.querySelector('time[datetime]');
+    if (timeEl) publishedTime = timeEl.getAttribute('datetime');
+
+    let p1 = null;
+    const contentMatch = html.match(/"contentUrl":\s*"(https:\/\/images-wixmp-[^"]+)"/);
+    if (contentMatch) p1 = contentMatch[1].replace(/\\u002F/g, "/");
+
+    if (!p1) {
+      const ogMatch = html.match(/<meta\s+property="og:image"\s+content="([^"]+)"/i);
+      if (ogMatch) p1 = ogMatch[1].replace(/&amp;/g, "&");
+    }
+
+    if (!p1 && fallbackThumb) p1 = fallbackThumb;
+    if (p1) {
+      const enhanced = enhanceWixmpUrl(p1);
+      mediaUrls.push(enhanced.url || p1);
+    }
+
+    const allHeaders = Array.from(doc.querySelectorAll("h2"));
+    const allImagesH2 = allHeaders.find(h => h.textContent.trim().toLowerCase() === "all images");
+    const carouselSection = allImagesH2 ? allImagesH2.closest("section") : null;
+
+    let thumbs = [];
+    if (carouselSection) {
+      thumbs = Array.from(carouselSection.querySelectorAll("button img, .nijSZp img"))
+        .map(img => img.getAttribute("src"))
+        .filter(src => src && src.startsWith("http"));
+    }
+
+    if (thumbs.length === 0) {
+      const preloads = Array.from(doc.querySelectorAll('link[rel="preload"][as="image"]'));
+      thumbs = preloads
+        .map(l => l.getAttribute("href"))
+        .filter(href => href && href.startsWith("http") && !href.includes(".woff") && !href.includes("avatar"));
+    }
+
+    if (thumbs.length > 1) {
+      for (let i = 1; i < thumbs.length; i++) {
+        const enh = enhanceWixmpUrl(thumbs[i]);
+        if (enh.url) mediaUrls.push(enh.url);
+      }
+    }
+
+    return { title, authorName, authorHandle: `@${authorName}`, publishedTime, mediaUrls };
+  }
+
+  let isDAHarvesting = false;
+  async function harvestDeviantArt() {
+    if (isDAHarvesting) return;
+    isDAHarvesting = true;
+
+    const artLinks = Array.from(document.querySelectorAll('a[href*="/art/"]'));
+    const uncollected = [];
+
+    artLinks.forEach(a => {
+      const match = a.href.match(/\/art\/.*?-(\d+)(?:\?|$)/);
+      if (match) {
+        const id = match[1];
+        if (!scrapedMap.has(id)) {
+          const thumb = a.querySelector('img')?.src || a.closest('section')?.querySelector('img')?.src;
+          uncollected.push({ id, url: a.href, thumb });
+        }
+      }
+    });
+
+    if (uncollected.length > 0) {
+      log(`Scanning ${uncollected.length} visible links...`);
+
+      for (const item of uncollected) {
+        try {
+          const res = await fetch(item.url, { credentials: "include" });
+          if (!res.ok) continue;
+
+          const html = await res.text();
+          const doc = new DOMParser().parseFromString(html, "text/html");
+          const ext = extractDeviantArtPage(html, doc, item.thumb, item.url);
+
+          scrapedMap.set(item.id, {
+            authorHandle: ext.authorHandle,
+            authorName: ext.authorName,
+            id: 'da_' + item.id,
+            isArticle: false,
+            linkCard: null,
+            mediaUrl: ext.mediaUrls[0] || null,
+            mediaUrls: ext.mediaUrls,
+            fallbackUrl: ext.mediaUrls[0] || null,
+            quotedTweet: null,
+            scrapedAt: new Date().toISOString(),
+            text: ext.title,
+            timestamp: ext.publishedTime,
+            url: item.url,
+            videoPoster: null
+          });
+
+          saveToDisk();
+          updateCounters();
+        } catch (e) {}
+        await new Promise(r => setTimeout(r, 140));
+      }
+    }
+    isDAHarvesting = false;
+  }
+
+  // --- SINGLE POST FETCH & PICKER LOGIC ---
+  async function fetchCurrentPage() {
+    const loc = window.location.href;
+    log("Fetching active page post...");
+
+    if (currentMode === 'safebooru') {
+      if (extractSafebooruPage()) log("[✓] Captured active Safebooru post.");
+      else log("❌ Could not extract post.");
+    } else if (currentMode === 'rule34') {
+      if (extractRule34Page()) log("[✓] Captured active Rule34 post.");
+      else log("❌ Could not extract post.");
+    } else if (currentMode === 'deviantart') {
+      const match = loc.match(/\/art\/.*?-(\d+)(?:\?|$)/);
+      if (!match) return log("❌ Not on DeviantArt post URL.");
+      const id = match[1];
+      const ext = extractDeviantArtPage(document.documentElement.outerHTML, document, null, loc);
+      const postObj = {
+        authorHandle: ext.authorHandle,
+        authorName: ext.authorName,
+        id: 'da_' + id,
+        isArticle: false,
+        linkCard: null,
+        mediaUrl: ext.mediaUrls[0] || null,
+        mediaUrls: ext.mediaUrls,
+        fallbackUrl: ext.mediaUrls[0] || null,
+        quotedTweet: null,
+        scrapedAt: new Date().toISOString(),
+        text: ext.title,
+        timestamp: ext.publishedTime,
+        url: loc,
+        videoPoster: null
+      };
+      scrapedMap.set(id, postObj);
+      selectedMap.set('da_' + id, postObj);
+      saveToDisk();
+      updateCounters();
+      log(`[✓] Captured DA: "${ext.title}"`);
+    } else if (currentMode === 'twitter') {
+      const match = loc.match(/\/status\/(\d+)/);
+      if (!match) return log("❌ Not on Tweet status URL.");
+      const id = match[1];
+      const article = document.querySelector(`article[data-testid="tweet"] a[href*="${id}"]`)?.closest('article') || document.querySelector('article[data-testid="tweet"]');
+      if (article && extractTweetElement(article)) {
+        selectedMap.set(id, scrapedMap.get(id));
+        saveToDisk();
+        updateCounters();
+        log(`[✓] Captured tweet (#${id}).`);
+      } else {
+        log("❌ Unable to parse tweet DOM.");
+      }
+    } else if (currentMode === 'pixiv') {
+      const match = loc.match(/\/artworks\/(\d+)/);
+      if (!match) return log("❌ Not on artwork URL.");
+      const id = match[1];
+      const meta = document.getElementById('meta-preload-data');
+      if (meta && meta.content) {
+        try {
+          const data = JSON.parse(meta.content);
+          if (data?.illust?.[id]) {
+            processPixivWork(data.illust[id]);
+            selectedMap.set(id, scrapedMap.get(id));
+            saveToDisk();
+            updateCounters();
+            return log(`[✓] Captured Pixiv post #${id}.`);
+          }
+        } catch (e) {}
+      }
+      harvestPixivDOM();
+      if (scrapedMap.has(id)) {
+        selectedMap.set(id, scrapedMap.get(id));
+        saveToDisk();
+        updateCounters();
+      }
+      log(`[✓] Processed Pixiv artwork #${id}.`);
+    } else if (currentMode === 'pinterest') {
+      const match = loc.match(/\/pin\/(\d+)/);
+      if (!match) return log("❌ Not on Pin URL.");
+      harvestPinterestDOM();
+      const id = match[1];
+      if (scrapedMap.has(id)) {
+        selectedMap.set(id, scrapedMap.get(id));
+        saveToDisk();
+        updateCounters();
+      }
+      log(`[✓] Processed Pin #${id}.`);
+    }
+  }
+
+  function getPostTarget(node) {
+    if (!node || node === panel || panel.contains(node)) return null;
+    if (currentMode === 'twitter') return node.closest('article[data-testid="tweet"]');
+    if (currentMode === 'safebooru' || currentMode === 'rule34') return node.closest('span.thumb, article.thumb');
+    if (currentMode === 'pixiv') return node.closest('a[href*="/artworks/"]') || node.closest('li');
+    if (currentMode === 'pinterest') return node.closest('div[data-test-id="pin"], div[data-test-id="pinWrapper"]');
+    if (currentMode === 'deviantart') return node.closest('a[href*="/art/"]') || node.closest('section');
+    return null;
+  }
+
+  function handlePickerMove(e) {
+    const target = getPostTarget(e.target);
+    if (hoveredEl && hoveredEl !== target) {
+      hoveredEl.removeAttribute('data-sc-hovered');
+      hoveredEl = null;
+    }
+    if (target && target !== hoveredEl) {
+      hoveredEl = target;
+      hoveredEl.setAttribute('data-sc-hovered', 'true');
+    }
+  }
+
+  async function handlePickerClick(e) {
+    if (panel.contains(e.target)) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const target = getPostTarget(e.target);
+    if (!target) return log("No post element under pointer.");
+
+    let key = null;
+
+    if (currentMode === 'twitter') {
+      extractTweetElement(target);
+      const timeEl = target.querySelector('time');
+      const href = timeEl?.closest('a')?.getAttribute('href') || '';
+      const match = href.match(/\/status\/(\d+)/);
+      if (match) key = match[1];
+    } else if (currentMode === 'safebooru') {
+      key = extractSafebooruThumb(target);
+    } else if (currentMode === 'rule34') {
+      key = extractRule34Thumb(target);
+    } else if (currentMode === 'pixiv') {
+      extractPixivCard(target);
+      const link = target.matches('a[href*="/artworks/"]') ? target : target.querySelector('a[href*="/artworks/"]');
+      const match = (link?.getAttribute('href') || '').match(/\/artworks\/(\d+)/);
+      if (match) key = match[1];
+    } else if (currentMode === 'pinterest') {
+      extractPinterestCard(target);
+      const link = target.querySelector('a[href*="/pin/"]') || target.closest('a[href*="/pin/"]');
+      const match = (link?.getAttribute('href') || '').match(/\/pin\/(\d+)/);
+      if (match) key = match[1];
+    } else if (currentMode === 'deviantart') {
+      const link = target.matches('a[href*="/art/"]') ? target : target.querySelector('a[href*="/art/"]');
+      if (link && link.href) {
+        const match = link.href.match(/\/art\/.*?-(\d+)/);
+        const daId = match ? match[1] : null;
+        if (daId && !scrapedMap.has('da_' + daId)) {
+          try {
+            const res = await fetch(link.href, { credentials: "include" });
+            const html = await res.text();
+            const doc = new DOMParser().parseFromString(html, "text/html");
+            const ext = extractDeviantArtPage(html, doc, null, link.href);
+            scrapedMap.set('da_' + daId, {
+              authorHandle: ext.authorHandle,
+              authorName: ext.authorName,
+              id: 'da_' + daId,
+              isArticle: false,
+              linkCard: null,
+              mediaUrl: ext.mediaUrls[0] || null,
+              mediaUrls: ext.mediaUrls,
+              fallbackUrl: ext.mediaUrls[0] || null,
+              quotedTweet: null,
+              scrapedAt: new Date().toISOString(),
+              text: ext.title,
+              timestamp: ext.publishedTime,
+              url: link.href,
+              videoPoster: null
+            });
+            saveToDisk();
+          } catch(err) {}
+        }
+        if (daId) key = 'da_' + daId;
+      }
+    }
+
+    if (key && scrapedMap.has(key)) {
+      if (selectedMap.has(key)) {
+        selectedMap.delete(key);
+        target.removeAttribute('data-sc-selected');
+        log(`[−] Deselected #${key}`);
+      } else {
+        selectedMap.set(key, scrapedMap.get(key));
+        target.setAttribute('data-sc-selected', 'true');
+        log(`[✓] Selected #${key}`);
+      }
+      saveToDisk();
+      updateCounters();
+    } else {
+      log("❌ Failed extracting element.");
+    }
+  }
+
+  function handlePickerKey(e) {
+    if (e.key === 'Escape') stopPicker();
+  }
+
+  function startPicker() {
+    if (isPicking) return stopPicker();
+    isPicking = true;
+    pickBtn.innerText = 'Done (Esc)';
+    pickBtn.style.background = '#da3633';
+    document.body.style.cursor = 'crosshair';
+
+    document.addEventListener('mousemove', handlePickerMove, true);
+    document.addEventListener('click', handlePickerClick, true);
+    document.addEventListener('keydown', handlePickerKey, true);
+    log("Selection Mode: Click post to toggle select/deselect. Press Esc or 'Done' to exit.");
+  }
+
+  function stopPicker() {
+    isPicking = false;
+    pickBtn.innerText = 'Select Posts';
+    pickBtn.style.background = '#d29922';
+    document.body.style.cursor = 'default';
+
+    if (hoveredEl) {
+      hoveredEl.removeAttribute('data-sc-hovered');
+      hoveredEl = null;
+    }
+
+    document.removeEventListener('mousemove', handlePickerMove, true);
+    document.removeEventListener('click', handlePickerClick, true);
+    document.removeEventListener('keydown', handlePickerKey, true);
+  }
+
+  // 6. UNIVERSAL TRAFFIC HOOKS
+  function recursiveJsonScan(obj) {
+    // Only capture background network traffic if auto-scroll is actively running
+    if (!isScraping || !obj || typeof obj !== 'object') return;
+
+    if (currentMode === 'twitter') {
+      if ((obj.legacy && (obj.legacy.id_str || obj.rest_id || obj.legacy.full_text !== undefined)) || (obj.rest_id && obj.legacy)) {
+        processTweetLegacy(obj);
+        return;
+      }
+    } else if (currentMode === 'pixiv') {
+      if (obj.illustType !== undefined && obj.id && (obj.url || obj.title)) {
+        processPixivWork(obj);
+        return;
+      }
+    } else if (currentMode === 'pinterest') {
+      if (obj.id && (obj.images || obj.image_spec || obj.type === 'pin')) {
+        processPin(obj);
+        return;
+      }
+    }
+
+    if (Array.isArray(obj)) {
+      for (const item of obj) recursiveJsonScan(item);
+    } else {
+      for (const key of Object.keys(obj)) {
+        recursiveJsonScan(obj[key]);
+      }
+    }
+  }
+
+  const originalFetch = window.fetch;
+  window.fetch = async function(...args) {
+    const res = await originalFetch.apply(this, args);
+    try {
+      if (isScraping) {
+        const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
+        if (
+          (currentMode === 'twitter' && (url.includes('/graphql/') || url.includes('/Likes') || url.includes('/UserTweets'))) ||
+          (currentMode === 'pixiv' && url.includes('/ajax/')) ||
+          (currentMode === 'pinterest' && (url.includes('/resource/') || url.includes('Resource/get')))
+        ) {
+          res.clone().json().then(data => recursiveJsonScan(data)).catch(() => {});
+        }
+      }
+    } catch (e) {}
+    return res;
+  };
+
+  const origOpen = XMLHttpRequest.prototype.open;
+  const origSend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+    this._url = url;
+    return origOpen.apply(this, [method, url, ...rest]);
+  };
+  XMLHttpRequest.prototype.send = function(...args) {
+    this.addEventListener('load', function() {
+      try {
+        if (isScraping && this._url && currentMode === 'pinterest' && (this._url.includes('/resource/') || this._url.includes('Resource/get'))) {
+          recursiveJsonScan(JSON.parse(this.responseText));
+        }
+      } catch (e) {}
+    });
+    return origSend.apply(this, args);
+  };
+
+  // 7. MASTER HARVESTER DISPATCHER
+  function harvestCurrentMode() {
+    if (currentMode === 'twitter') harvestTwitterDOM();
+    else if (currentMode === 'safebooru') harvestSafebooruDOM();
+    else if (currentMode === 'rule34') harvestRule34DOM();
+    else if (currentMode === 'pixiv') harvestPixivDOM();
+    else if (currentMode === 'pinterest') harvestPinterestDOM();
+    else if (currentMode === 'deviantart') harvestDeviantArt();
+  }
+
+  // 8. BACKGROUND WORKER & AUTO-SCROLLER
+  const workerBlob = new Blob([`
+    let timer = null;
+    self.onmessage = (e) => {
+      if (e.data === 'start') {
+        timer = setInterval(() => postMessage('tick'), 600);
+      } else if (e.data === 'stop') {
+        clearInterval(timer);
+      }
+    };
+  `], { type: 'application/javascript' });
+  const worker = new Worker(URL.createObjectURL(workerBlob));
+
+  function tick() {
+    harvestCurrentMode();
+
+    const preScroll = window.scrollY;
+    window.scrollBy({ top: 1400, behavior: 'instant' });
+
+    if (currentMode === 'rule34' || currentMode === 'safebooru') {
+      const isBottom = (window.innerHeight + window.scrollY) >= (document.body.offsetHeight - 400);
+      if (isBottom) {
+        const nextLink = document.querySelector('a.paginator-next, a[rel="next"], a[alt="next"], a[name="next"], #paginator a:last-child');
+        if (nextLink && nextLink.href) {
+          log("Next page navigating...");
+          nextLink.click();
+          return;
+        }
+      }
+    }
+
+    if (window.scrollY === preScroll && !document.hidden) {
+      idleCount++;
+
+      if (idleCount > 2) {
+        document.querySelectorAll('div[role="button"], span').forEach(b => {
+          if (/retry|try again|see new tweets/i.test(b.innerText || '')) {
+            try { b.click(); } catch (e) {}
+          }
+        });
+
+        window.scrollBy(0, -350);
+        setTimeout(() => {
+          window.scrollBy(0, 500);
+          window.dispatchEvent(new Event('scroll'));
+        }, 120);
+      }
+
+      if (idleCount > 75) {
+        stop();
+        log("Bottom reached or rate limited.");
+      }
+    } else {
+      idleCount = 0;
+    }
+  }
+
+  function start() {
+    isScraping = true;
+    toggleBtn.innerText = 'Pause Auto-Scroll';
+    toggleBtn.style.background = '#da3633';
+    badgeEl.innerText = 'Running';
+    badgeEl.style.background = '#238636';
+    harvestCurrentMode();
+    worker.postMessage('start');
+    log("Auto-scroll started.");
+  }
+
+  function stop() {
+    isScraping = false;
+    toggleBtn.innerText = 'Start Auto-Scroll';
+    toggleBtn.style.background = '#238636';
+    badgeEl.innerText = 'Paused';
+    badgeEl.style.background = '#21262d';
+    worker.postMessage('stop');
+    log("Auto-scroll paused.");
+  }
+
+  function closeProgram() {
+    stop();
+    stopPicker();
+    clearAllDomOutlines();
+
+    window.fetch = originalFetch;
+    XMLHttpRequest.prototype.open = origOpen;
+    XMLHttpRequest.prototype.send = origSend;
+
+    worker.terminate();
+    panel.remove();
+    styleTag.remove();
+    window.__universalArtScraperActive = false;
+    console.log("[SCRAPER] Closed and detached.");
+  }
+
+  worker.onmessage = (e) => {
+    if (e.data === 'tick' && isScraping) tick();
+  };
+
+  toggleBtn.onclick = () => (isScraping ? stop() : start());
+  rescanBtn.onclick = () => {
+    harvestCurrentMode();
+    log("Scanned visible elements.");
+  };
+  pageBtn.onclick = () => fetchCurrentPage();
+  pickBtn.onclick = () => startPicker();
+  closeBtn.onclick = closeProgram;
+
+  exportBtn.onclick = () => {
+    if (scrapedMap.size === 0) return alert("No items recorded yet.");
+    const data = { posts: Array.from(scrapedMap.values()) };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${currentMode}_all_export_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    log(`Exported all ${scrapedMap.size} posts.`);
+  };
+
+  exportSelectedBtn.onclick = () => {
+    if (selectedMap.size === 0) return alert("No posts selected.");
+    const data = { posts: Array.from(selectedMap.values()) };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${currentMode}_selected_export_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    log(`Exported ${selectedMap.size} selected posts.`);
+  };
+
+  clearBtn.onclick = () => {
+    if (confirm(`Clear cached items for ${currentMode.toUpperCase()}?`)) {
+      clearAllDomOutlines();
+      localStorage.removeItem(STORAGE_PREFIX + currentMode);
+      localStorage.removeItem(SELECTED_PREFIX + currentMode);
+      scrapedMap.clear();
+      selectedMap.clear();
+      updateCounters();
+      log("Mode cache cleared.");
+    }
+  };
+
+  clearSelectedBtn.onclick = () => {
+    clearAllDomOutlines();
+    selectedMap.clear();
+    saveToDisk();
+    updateCounters();
+    log("Selected items cleared.");
+  };
+
+  // Only read existing cache into UI on boot; do not scrape
+  updateCounters();
+  log(`Ready on ${window.location.hostname}`);
+})();
